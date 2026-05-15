@@ -4,12 +4,8 @@ import 'package:url_launcher/url_launcher.dart';
 class AppDetectionService {
   // Check if WhatsApp is installed
   static Future<bool> isWhatsAppInstalled() async {
-    final whatsappUrl = Uri.parse('whatsapp://send');
-    try {
-      return await canLaunchUrl(whatsappUrl);
-    } catch (e) {
-      return false;
-    }
+    // ✅ wa.me always works — no need to check package visibility
+    return true;
   }
 
   // Check if Telegram is installed
@@ -107,12 +103,13 @@ class AppDetectionService {
           color: const Color(0xFF25D366),
           isAvailable: true,
           launch: (phone, message) async {
-            String cleanNumber = phone.replaceAll(RegExp(r'[^0-9+]'), '');
-            if (!cleanNumber.startsWith('+')) {
-              cleanNumber = '+91$cleanNumber';
+            String cleanNumber = phone.replaceAll(RegExp(r'[^0-9]'), '');
+            if (cleanNumber.startsWith('91') && cleanNumber.length > 10) {
+              cleanNumber = cleanNumber.substring(2);
             }
+            cleanNumber = '91$cleanNumber';
             final url = Uri.parse(
-              'whatsapp://send?phone=$cleanNumber&text=${Uri.encodeComponent(message)}',
+              'https://wa.me/$cleanNumber?text=${Uri.encodeComponent(message)}',
             );
             if (await canLaunchUrl(url)) {
               await launchUrl(url, mode: LaunchMode.externalApplication);

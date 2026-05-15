@@ -1,9 +1,11 @@
 package com.example.message_me
 
 import android.Manifest
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -66,7 +68,6 @@ class CallDetectionService : Service() {
     private var phoneStateListener: PhoneStateListener? = null
     private var telephonyCallback: TelephonyCallback? = null
 
-    // ✅ WakeLock — keeps CPU awake when screen is off
     private var wakeLock: PowerManager.WakeLock? = null
 
     private var lastState = TelephonyManager.CALL_STATE_IDLE
@@ -76,94 +77,60 @@ class CallDetectionService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-override fun onCreate() {
-    super.onCreate()
-    Log.d(TAG, "📡 CallDetectionService onCreate")
+    override fun onCreate() {
+        super.onCreate()
+        Log.d(TAG, "📡 CallDetectionService onCreate")
 
-    createNotificationChannel()
+        createNotificationChannel()
 
-    try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                buildNotification(),
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, buildNotification())
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification(),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, buildNotification())
+            }
+            Log.d(TAG, "✅ startForeground called")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ startForeground failed: ${e.message}")
+            stopSelf()
+            return
         }
-        Log.d(TAG, "✅ startForeground called")
-    } catch (e: Exception) {
-        Log.e(TAG, "❌ startForeground failed: ${e.message}")
-        stopSelf()
-        return
-    }
 
-    acquireWakeLock()
+        acquireWakeLock()
 
-    // ✅ Schedule watchdog to restart us if killed
-    ServiceWatchdog.schedule(this)
-
-    if (!hasPhonePermission(this)) {
-        Log.e(TAG, "❌ No phone permission")
-        stopSelf()
-        return
-    }
-
-    telephonyManager =
-        getSystemService(TELEPHONY_SERVICE) as TelephonyManager
-
-    try {
-        startListening()
-        Log.d(TAG, "📡 Listening for calls")
-    } catch (e: Exception) {
-        Log.e(TAG, "❌ Failed to start listening: ${e.message}")
-        stopSelf()
-    }
-}
-
-override fun onDestroy() {
-    super.onDestroy()
-    stopListening()
-    releaseWakeLock()
-    Log.d(TAG, "📡 Service destroyed — watchdog will restart")
-    // ✅ Don't cancel watchdog — let it restart us
-    scheduleRestart()
-}
-
-// ✅ Schedule immediate restart when destroyed
-private fun scheduleRestart() {
-    try {
-        val restartIntent = Intent(this, CallDetectionService::class.java)
-        val pendingIntent = PendingIntent.getService(
-            this, 1, restartIntent,
-            PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val alarmManager =
-            getSystemService(Context.ALARM_SERVICE) as AlarmManager
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP,
-                System.currentTimeMillis() + 3000, // 3 seconds
-                pendingIntent
-            )
-        } else {
-            alarmManager.setExact(
-                AlarmManager.RTC_WAKEUP,
-                System.currentTimeMillis() + 3000,
-                pendingIntent
-            )
+        if (!hasPhonePermission(this)) {
+            Log.e(TAG, "❌ No phone permission")
+            stopSelf()
+            return
         }
-        Log.d(TAG, "⏰ Service restart scheduled in 3 seconds")
-    } catch (e: Exception) {
-        Log.e(TAG, "❌ Restart schedule failed: ${e.message}")
+
+        telephonyManager =
+            getSystemService(TELEPHONY_SERVICE) as TelephonyManager
+
+        try {
+            startListening()
+            Log.d(TAG, "📡 Listening for calls")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to start listening: ${e.message}")
+            stopSelf()
+        }
     }
-}
+
+    override fun onDestroy() {
+        super.onDestroy()
+        stopListening()
+        releaseWakeLock()
+        Log.d(TAG, "📡 Service destroyed — scheduling restart")
+        scheduleRestart()
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "📡 onStartCommand")
 
-        // ✅ Re-acquire WakeLock if released
         if (wakeLock?.isHeld == false) {
             acquireWakeLock()
         }
@@ -181,18 +148,6 @@ private fun scheduleRestart() {
         return START_STICKY
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        stopListening()
-        releaseWakeLock()
-        Log.d(TAG, "📡 CallDetectionService destroyed — scheduling restart")
-
-        // ✅ Schedule restart when destroyed
-        scheduleRestart()
-    }
-
-    // ── WakeLock ──────────────────────────────────────────────────
-
     private fun acquireWakeLock() {
         try {
             val powerManager =
@@ -201,8 +156,6 @@ private fun scheduleRestart() {
                 PowerManager.PARTIAL_WAKE_LOCK,
                 "SmartPinger::CallDetectionWakeLock"
             ).apply {
-                // ✅ PARTIAL_WAKE_LOCK keeps CPU on but allows screen off
-                // No timeout — held until explicitly released
                 acquire()
             }
             Log.d(TAG, "🔋 WakeLock acquired")
@@ -222,36 +175,38 @@ private fun scheduleRestart() {
         }
     }
 
-    // ── Service restart ───────────────────────────────────────────
-
     private fun scheduleRestart() {
         try {
             val restartIntent = Intent(this, CallDetectionService::class.java)
-            val pendingIntent = android.app.PendingIntent.getService(
+            val pendingIntent = PendingIntent.getService(
                 this, 1, restartIntent,
-                android.app.PendingIntent.FLAG_ONE_SHOT or
-                    android.app.PendingIntent.FLAG_IMMUTABLE
+                PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
             )
-            val alarmManager =
-                getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
-            alarmManager.set(
-                android.app.AlarmManager.RTC_WAKEUP,
-                System.currentTimeMillis() + 2000, // restart after 2 seconds
-                pendingIntent
-            )
-            Log.d(TAG, "⏰ Restart scheduled in 2 seconds")
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    System.currentTimeMillis() + 3000,
+                    pendingIntent
+                )
+            } else {
+                alarmManager.setExact(
+                    AlarmManager.RTC_WAKEUP,
+                    System.currentTimeMillis() + 3000,
+                    pendingIntent
+                )
+            }
+            Log.d(TAG, "⏰ Service restart scheduled in 3 seconds")
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Schedule restart failed: ${e.message}")
+            Log.e(TAG, "❌ Restart schedule failed: ${e.message}")
         }
     }
-
-    // ── Notification ──────────────────────────────────────────────
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             try {
-                val manager =
-                    getSystemService(NotificationManager::class.java)
+                val manager = getSystemService(NotificationManager::class.java)
                 if (manager.getNotificationChannel(CHANNEL_ID) == null) {
                     val channel = NotificationChannel(
                         CHANNEL_ID,
@@ -282,8 +237,6 @@ private fun scheduleRestart() {
             .setOngoing(true)
             .build()
     }
-
-    // ── Listeners ─────────────────────────────────────────────────
 
     private fun startListening() {
         val tm = telephonyManager ?: return
@@ -349,8 +302,6 @@ private fun scheduleRestart() {
         }
     }
 
-    // ── Call state ────────────────────────────────────────────────
-
     private fun handleStateChange(state: Int, number: String?) {
         val phone = when {
             !number.isNullOrEmpty() -> number
@@ -408,8 +359,6 @@ private fun scheduleRestart() {
             }
         }
     }
-
-    // ── SMS ───────────────────────────────────────────────────────
 
     private fun triggerSms(phone: String, callType: String) {
         try {
@@ -469,7 +418,6 @@ private fun scheduleRestart() {
 
             nativePrefs.edit().putBoolean(sentKey, true).apply()
 
-            // ✅ Broadcast instead of startActivity — no app opening
             try {
                 val broadcastIntent = Intent(
                     "com.example.message_me.SMS_SENT_BY_NATIVE"

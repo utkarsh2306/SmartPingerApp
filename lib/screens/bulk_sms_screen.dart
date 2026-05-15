@@ -226,7 +226,10 @@ class _BulkSmsScreenState extends State<BulkSmsScreen> {
       backgroundColor: Colors.transparent,
       builder: (context) => StatefulBuilder(
         builder: (context, setSheet) => Container(
-          height: MediaQuery.of(context).size.height * 0.85,
+          // ✅ Responsive height — respects keyboard and small screens
+          height: (MediaQuery.of(context).size.height -
+              MediaQuery.of(context).padding.top -
+              MediaQuery.of(context).viewInsets.bottom) * 0.92,
           decoration: const BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -430,7 +433,7 @@ class _BulkSmsScreenState extends State<BulkSmsScreen> {
                             child: Padding(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 16,
-                                vertical: 10,
+                                vertical: 8, // ✅ reduced from 10 for small screens
                               ),
                               child: Row(
                                 children: [

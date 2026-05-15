@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:device_info_plus/device_info_plus.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:message_me/core/api_config.dart';
 import 'package:message_me/screens/dashboard_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -32,9 +33,6 @@ class _LoginScreenState extends State<LoginScreen>
   static const _primary = Color(0xFF6366F1);
   static const _accent = Color(0xFF10B981);
   static const _bg = Color(0xFF4F46E5);
-
-  final String baseUrl =
-      'http://ec2-65-2-170-60.ap-south-1.compute.amazonaws.com:8080';
 
   @override
   void initState() {
@@ -104,7 +102,7 @@ class _LoginScreenState extends State<LoginScreen>
     final deviceId = await _getDeviceId();
     try {
       final res = await http.post(
-        Uri.parse('$baseUrl/api/referral/validate'),
+        Uri.parse(ApiConfig.validateReferral),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
           'code': code.trim().toUpperCase(),
@@ -140,57 +138,125 @@ class _LoginScreenState extends State<LoginScreen>
   // ── Login ──────────────────────────────────────────────────────
 
   Future<void> _login() async {
+    debugPrint('========== LOGIN ATTEMPT START ==========');
+
     final email = _emailCtrl.text.trim();
     final password = _passwordCtrl.text.trim();
+
+    debugPrint('📧 Email entered: $email');
+    debugPrint(
+      '🔒 Password entered: ${'*' * password.length} (length: ${password.length})',
+    );
+
     if (email.isEmpty) {
+      debugPrint('❌ Login failed: Email is empty');
       _showSnack('Please enter your email', Colors.red);
       return;
     }
     if (password.isEmpty) {
+      debugPrint('❌ Login failed: Password is empty');
       _showSnack('Please enter your password', Colors.red);
       return;
     }
 
+    debugPrint('✅ Email and password validation passed');
+    debugPrint('🔄 Setting loading state to true');
     setState(() => loading = true);
+
     try {
-      final res = await http.post(
-        Uri.parse('$baseUrl/api/auth/login'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'identifier': email, 'password': password}),
+      final url = Uri.parse(ApiConfig.login);
+      debugPrint('🌐 Login URL: $url');
+
+      final requestBody = json.encode({
+        'identifier': email,
+        'password': password,
+      });
+      debugPrint(
+        '📤 Request body: ${requestBody.replaceAll(password, '********')}',
       );
+
+      debugPrint('⏳ Sending POST request...');
+      final res = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: requestBody,
+      );
+
+      debugPrint('📥 Response received - Status code: ${res.statusCode}');
+      debugPrint('📦 Response body: ${res.body}');
+
       final data = json.decode(res.body);
+      debugPrint('🔍 Parsed response data: $data');
+
       if (res.statusCode == 200 && data['success'] == true) {
+        debugPrint('✅ Login successful!');
+        debugPrint('🔄 Saving user data to SharedPreferences...');
+
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('token', data['data']['token']);
-        await prefs.setString('user_id', data['data']['user']['id']);
-        await prefs.setString(
-          'user_email',
-          data['data']['user']['email'] ?? '',
-        );
-        await prefs.setString(
-          'user_name',
-          data['data']['user']['full_name'] ?? '',
-        );
+
+        final token = data['data']['token'];
+        final userId = data['data']['user']['id'];
+        final userEmail = data['data']['user']['email'] ?? '';
+        final userName = data['data']['user']['full_name'] ?? '';
+
+        // debugPrint('🔑 Token: ${token.substring(0, min(10, token.length))}...');
+        debugPrint('👤 User ID: $userId');
+        debugPrint('📧 User email: $userEmail');
+        debugPrint('📛 User name: $userName');
+
+        await prefs.setString('token', token);
+        debugPrint('✅ Token saved');
+
+        await prefs.setString('user_id', userId);
+        debugPrint('✅ User ID saved');
+
+        await prefs.setString('user_email', userEmail);
+        debugPrint('✅ User email saved');
+
+        await prefs.setString('user_name', userName);
+        debugPrint('✅ User name saved');
+
         await prefs.remove('is_guest');
+        debugPrint('✅ Guest flag removed');
+
         _showSnack('Login successful!', Colors.green);
+        debugPrint('⏳ Waiting 400ms before navigation...');
+
         await Future.delayed(const Duration(milliseconds: 400));
+
         if (mounted) {
+          debugPrint('🚀 Navigating to DashboardScreen');
+          debugPrint('🗑️ Removing all previous routes');
           Navigator.pushAndRemoveUntil(
             context,
             MaterialPageRoute(builder: (_) => const DashboardScreen()),
             (_) => false,
           );
+          debugPrint('✅ Navigation successful');
+        } else {
+          debugPrint('⚠️ Widget not mounted, skipping navigation');
         }
       } else {
-        _showSnack(data['error'] ?? 'Login failed', Colors.red);
+        final errorMsg = data['error'] ?? 'Login failed';
+        debugPrint('❌ Login failed - Status code: ${res.statusCode}');
+        debugPrint('❌ Error message: $errorMsg');
+        debugPrint('❌ Success flag: ${data['success']}');
+        _showSnack(errorMsg, Colors.red);
       }
-    } catch (_) {
+    } catch (e, stackTrace) {
+      debugPrint('💥 EXCEPTION CAUGHT: $e');
+      debugPrint('📚 Stack trace: $stackTrace');
       _showSnack('Network error. Please try again.', Colors.red);
     } finally {
-      if (mounted) setState(() => loading = false);
+      if (mounted) {
+        debugPrint('🔄 Setting loading state to false');
+        setState(() => loading = false);
+      } else {
+        debugPrint('⚠️ Widget not mounted, skipping loading state update');
+      }
+      debugPrint('========== LOGIN ATTEMPT END ==========');
     }
   }
-
   // ── Signup ─────────────────────────────────────────────────────
 
   Future<void> _signup() async {
@@ -222,7 +288,7 @@ class _LoginScreenState extends State<LoginScreen>
     setState(() => loading = true);
     try {
       final res = await http.post(
-        Uri.parse('$baseUrl/api/auth/register/email'),
+        Uri.parse(ApiConfig.register),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
           'email': email,

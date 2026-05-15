@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -65,6 +67,20 @@ class PermissionService {
     } catch (_) {
       await Permission.ignoreBatteryOptimizations.request();
     }
+  }
+
+  static Future<void> requestExactAlarmPermission() async {
+    try {
+      if (Platform.isAndroid) {
+        const platform = MethodChannel('com.example.message_me/settings');
+        final granted = await platform.invokeMethod(
+          'checkExactAlarmPermission',
+        );
+        if (granted == false) {
+          await platform.invokeMethod('requestExactAlarmPermission');
+        }
+      }
+    } catch (_) {}
   }
 
   // ✅ Open manufacturer-specific battery settings

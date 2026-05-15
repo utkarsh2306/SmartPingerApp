@@ -1,5 +1,6 @@
 package com.example.message_me
 
+import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Intent
@@ -13,6 +14,7 @@ import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import android.content.Context
 
 class MainActivity : FlutterActivity() {
 
@@ -183,54 +185,51 @@ class MainActivity : FlutterActivity() {
                         }
                         result.success(null)
                     }
-"checkExactAlarmPermission" -> {
-    val granted = if (Build.VERSION.SDK_INT >=
-        Build.VERSION_CODES.S) {
-        val alarmManager =
-            getSystemService(AlarmManager::class.java)
-        alarmManager.canScheduleExactAlarms()
-    } else {
-        true
-    }
-    result.success(granted)
-}
 
-"requestExactAlarmPermission" -> {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        val intent = Intent(
-            Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
-            Uri.parse("package:$packageName")
-        )
-        startActivity(intent)
-    }
-    result.success(null)
-}
+                    "checkExactAlarmPermission" -> {
+                        val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+                            alarmManager.canScheduleExactAlarms()
+                        } else {
+                            true
+                        }
+                        result.success(granted)
+                    }
+
+                    "requestExactAlarmPermission" -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            val intent = Intent(
+                                Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                                Uri.parse("package:$packageName")
+                            )
+                            startActivity(intent)
+                        }
+                        result.success(null)
+                    }
+                    
                     else -> result.notImplemented()
                 }
             }
     }
 
-override fun onCreate(savedInstanceState: Bundle?) {
-    setupCrashHandler()
-    createNotificationChannel()
-    super.onCreate(savedInstanceState)
-    syncFlutterPrefsToNative()
-    handleIntent(intent)
-    if (CallDetectionService.hasPhonePermission(this)) {
-        CallDetectionService.start(this)
-        // ✅ Start watchdog
-        ServiceWatchdog.schedule(this)
+    override fun onCreate(savedInstanceState: Bundle?) {
+        setupCrashHandler()
+        createNotificationChannel()
+        super.onCreate(savedInstanceState)
+        syncFlutterPrefsToNative()
+        handleIntent(intent)
+        if (CallDetectionService.hasPhonePermission(this)) {
+            CallDetectionService.start(this)
+        }
     }
-}
 
-override fun onResume() {
-    super.onResume()
-    syncFlutterPrefsToNative()
-    if (CallDetectionService.hasPhonePermission(this)) {
-        CallDetectionService.start(this)
-        ServiceWatchdog.schedule(this)
+    override fun onResume() {
+        super.onResume()
+        syncFlutterPrefsToNative()
+        if (CallDetectionService.hasPhonePermission(this)) {
+            CallDetectionService.start(this)
+        }
     }
-}
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -262,7 +261,6 @@ override fun onResume() {
             }
             Log.d(TAG, "==========================")
 
-            // ✅ Type-safe read — no ClassCastException
             val enabledRaw = flutterPrefs.all["flutter.auto_trigger_enabled"]
             val enabled = when (enabledRaw) {
                 is Boolean -> enabledRaw
