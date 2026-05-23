@@ -7,44 +7,40 @@ import 'package:flutter/services.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:message_me/service/database_service.dart';
 import 'package:message_me/service/notification_service.dart';
-import 'package:another_telephony/telephony.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 
+// ✅ Single background isolate entry point
 @pragma('vm:entry-point')
 void onBackgroundServiceStart(ServiceInstance service) async {
   WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
-  const nativeChannel = MethodChannel('com.example.message_me/native_events');
+
+  // ✅ Listen for native SMS sent event (from Kotlin layer)
+  const nativeChannel = MethodChannel('com.nextracom.smartpinger/native_events');
   nativeChannel.setMethodCallHandler((call) async {
     if (call.method == 'smsSentByNative') {
       final args = call.arguments as Map;
-      final phone = args['phone'] as String?;
+      final phone    = args['phone']     as String?;
       final callType = args['call_type'] as String?;
-      final message = args['message'] as String?;
+      final message  = args['message']   as String?;
       if (phone != null && message != null && callType != null) {
-        await _logAutoSms(phone, message, callType, null);
-        print('📝 Logged native SMS for $phone');
+        // ✅ Open its own DB connection — isolate-safe
+        await _logAutoSmsIsolated(phone, message, callType, null);
       }
     }
   });
+
   if (service is AndroidServiceInstance) {
-    service.on('setAsForeground').listen((event) {
-      service.setAsForegroundService();
-    });
-    service.on('setAsBackground').listen((event) {
-      service.setAsBackgroundService();
-    });
+    service.on('setAsForeground').listen((_) => service.setAsForegroundService());
+    service.on('setAsBackground').listen((_) => service.setAsBackgroundService());
   }
+  service.on('stop').listen((_) => service.stopSelf());
 
-  service.on('stop').listen((event) {
-    service.stopSelf();
-  });
-
-  // ✅ Sync rules to native on service start
+  // Sync rules to native on start
   await _syncRulesToNative();
 
-  // Poll calls every 10 seconds
+  // ✅ Poll every 10 seconds
   Timer.periodic(const Duration(seconds: 10), (_) async {
     await _checkForNewCalls();
   });
@@ -54,114 +50,95 @@ void onBackgroundServiceStart(ServiceInstance service) async {
     await _processPendingScheduledSms();
   });
 
-  // Clean SMS log every 24 hours
+  // Daily cleanup
   Timer.periodic(const Duration(hours: 24), (_) async {
     await _cleanDailySmsLog();
-    // Re-sync rules daily too
     await _syncRulesToNative();
   });
 
   // Update notification every minute
   Timer.periodic(const Duration(minutes: 1), (_) async {
     if (service is AndroidServiceInstance) {
+      final now = DateTime.now();
       service.setForegroundNotificationInfo(
-        title: 'Auto SMS Active',
-        content:
-            'Monitoring calls • ${DateTime.now().hour}:${DateTime.now().minute.toString().padLeft(2, '0')}',
+        title: 'Smart Pinger Active',
+        content: 'Auto SMS running • ${now.hour}:${now.minute.toString().padLeft(2, '0')}',
       );
     }
   });
 }
 
-// ─── Native sync ─────────────────────────────────────────────────
+// ── Isolate-safe DB helper ────────────────────────────────────────
+// ✅ Opens a fresh DB connection per call in background isolate
+// Avoids multi-isolate SQLite conflict
+Future<T> _withDb<T>(Future<T> Function(Database db) fn) async {
+  final db = await DatabaseService.db;
+  return fn(db);
+}
 
-// ✅ Updated signature — takes enabled as parameter
+// ── Native sync ───────────────────────────────────────────────────
 Future<void> _syncRulesToNative({bool? enabled}) async {
   try {
-    final db = await DatabaseService.db;
     final prefs = await SharedPreferences.getInstance();
-
-    // ✅ Use passed value OR read from prefs as fallback
     final isEnabled = enabled ?? prefs.getBool('auto_trigger_enabled') ?? false;
 
-    for (final callType in ['missed', 'incoming', 'outgoing']) {
-      final rules = await db.query(
-        'auto_sms_rules',
-        where: 'trigger_type = ? AND is_active = 1',
-        whereArgs: [callType],
-        limit: 1,
-        orderBy: 'created_at DESC',
-      );
+    await _withDb((db) async {
+      for (final callType in ['missed', 'incoming', 'outgoing']) {
+        final rules = await db.query('auto_sms_rules',
+          where: 'trigger_type = ? AND is_active = 1',
+          whereArgs: [callType], limit: 1, orderBy: 'created_at DESC');
 
-      if (rules.isEmpty) {
-        await prefs.remove('auto_sms_message_$callType');
-        print('📝 Cleared native rule for $callType');
-        continue;
-      }
+        if (rules.isEmpty) {
+          await prefs.remove('auto_sms_message_$callType');
+          continue;
+        }
 
-      final rule = rules.first;
-      String message = '';
-
-      final customMsg = rule['custom_message'] as String?;
-      if (customMsg != null && customMsg.isNotEmpty) {
-        message = customMsg;
-      } else {
-        final templateId = rule['template_id'] as int?;
-        if (templateId != null) {
-          final templates = await db.query(
-            'templates',
-            where: 'id = ?',
-            whereArgs: [templateId],
-          );
-          if (templates.isNotEmpty) {
-            message = templates.first['message'] as String? ?? '';
+        final rule = rules.first;
+        String message = '';
+        final customMsg = rule['custom_message'] as String?;
+        if (customMsg != null && customMsg.isNotEmpty) {
+          message = customMsg;
+        } else {
+          final templateId = rule['template_id'] as int?;
+          if (templateId != null) {
+            final templates = await db.query('templates',
+              where: 'id = ?', whereArgs: [templateId]);
+            if (templates.isNotEmpty) {
+              message = templates.first['message'] as String? ?? '';
+            }
           }
         }
-      }
 
-      if (message.isNotEmpty) {
-        await prefs.setString('auto_sms_message_$callType', message);
-        print('📝 Synced native rule for $callType: $message');
-      } else {
-        await prefs.remove('auto_sms_message_$callType');
+        if (message.isNotEmpty) {
+          await prefs.setString('auto_sms_message_$callType', message);
+        } else {
+          await prefs.remove('auto_sms_message_$callType');
+        }
       }
-    }
+    });
 
-    // ✅ Write enabled flag
     await prefs.setBool('auto_trigger_enabled', isEnabled);
-    print('📝 Native sync complete — enabled: $isEnabled');
   } catch (e) {
-    print('❌ Error syncing rules to native: $e');
+    debugPrint('❌ syncRulesToNative error: $e');
   }
 }
 
+// ── Daily cleanup ─────────────────────────────────────────────────
 Future<void> _cleanDailySmsLog() async {
-  final db = await DatabaseService.db;
-  final yesterday = DateTime.now()
-      .subtract(const Duration(hours: 24))
-      .millisecondsSinceEpoch;
-  final deleted = await db.delete(
-    'sms_sent_log',
-    where: 'sent_at < ?',
-    whereArgs: [yesterday],
-  );
-
-  // ✅ Also clear native SharedPreferences dedup keys older than today
   try {
-    final prefs = await SharedPreferences.getInstance();
-    final keys = prefs.getKeys().where((k) => k.startsWith('sent_')).toList();
+    final yesterday = DateTime.now()
+        .subtract(const Duration(hours: 24)).millisecondsSinceEpoch;
+    await _withDb((db) => db.delete('sms_sent_log',
+      where: 'sent_at < ?', whereArgs: [yesterday]));
 
+    final prefs = await SharedPreferences.getInstance();
     final todayKey = _getTodayKey();
-    for (final key in keys) {
-      if (!key.contains(todayKey)) {
-        await prefs.remove(key);
-      }
+    for (final key in prefs.getKeys().where((k) => k.startsWith('sent_'))) {
+      if (!key.contains(todayKey)) await prefs.remove(key);
     }
   } catch (e) {
-    print('⚠️ Could not clean native prefs: $e');
+    debugPrint('❌ cleanDailySmsLog error: $e');
   }
-
-  if (deleted > 0) print('🧹 Cleaned $deleted old sms_sent_log entries');
 }
 
 String _getTodayKey() {
@@ -169,342 +146,268 @@ String _getTodayKey() {
   return '${now.year}_${now.month}_${now.day}';
 }
 
-// ─── Call checking ────────────────────────────────────────────────
-
+// ── Call checking ─────────────────────────────────────────────────
 Future<void> _checkForNewCalls() async {
   try {
-    final allLogs = await CallLog.get();
     final fiveMinutesAgo = DateTime.now()
-        .subtract(const Duration(minutes: 5))
-        .millisecondsSinceEpoch;
+        .subtract(const Duration(minutes: 5)).millisecondsSinceEpoch;
 
-    final recentCalls = allLogs.where((call) {
-      return call.timestamp != null && call.timestamp! >= fiveMinutesAgo;
-    }).toList();
+    final allLogs  = await CallLog.get();
+    final recent   = allLogs.where((c) =>
+      c.timestamp != null && c.timestamp! >= fiveMinutesAgo).toList();
 
-    if (recentCalls.isEmpty) return;
+    if (recent.isEmpty) return;
 
-    print('📞 ${recentCalls.length} recent calls found');
-
-    for (var call in recentCalls) {
+    for (final call in recent) {
       if (call.number == null || call.number!.isEmpty) continue;
       if (call.timestamp == null) continue;
 
-      final isProcessed = await _isCallProcessed(call);
-      if (!isProcessed) {
-        print('✅ New call: ${call.number} (${call.callType})');
+      final processed = await _isCallProcessed(call);
+      if (!processed) {
         await _processNewCall(call);
         await _markCallProcessed(call);
       }
     }
   } catch (e) {
-    print('❌ Error checking calls: $e');
+    debugPrint('❌ checkForNewCalls error: $e');
   }
 }
 
 Future<bool> _isCallProcessed(CallLogEntry call) async {
   try {
-    final db = await DatabaseService.db;
-    final result = await db.query(
-      'processed_calls',
-      where: 'call_id = ?',
-      whereArgs: [call.id.toString()],
-    );
-    return result.isNotEmpty;
-  } catch (e) {
-    return false;
-  }
+    return await _withDb((db) async {
+      final r = await db.query('processed_calls',
+        where: 'call_id = ?', whereArgs: [call.id.toString()]);
+      return r.isNotEmpty;
+    });
+  } catch (_) { return false; }
 }
 
 Future<void> _markCallProcessed(CallLogEntry call) async {
-  final db = await DatabaseService.db;
-  await db.insert('processed_calls', {
-    'call_id': call.id.toString(),
-    'phone': call.number,
-    'timestamp': call.timestamp,
-    'call_type': call.callType?.index,
-    'processed_at': DateTime.now().millisecondsSinceEpoch,
-  }, conflictAlgorithm: ConflictAlgorithm.replace);
+  try {
+    await _withDb((db) => db.insert('processed_calls', {
+      'call_id':    call.id.toString(),
+      'phone':      call.number,
+      'timestamp':  call.timestamp,
+      'call_type':  call.callType?.index,
+      'processed_at': DateTime.now().millisecondsSinceEpoch,
+    }, conflictAlgorithm: ConflictAlgorithm.replace));
+  } catch (e) {
+    debugPrint('❌ markCallProcessed error: $e');
+  }
 }
 
 Future<void> _processNewCall(CallLogEntry call) async {
   String callType = 'unknown';
   if (call.callType == CallType.incoming) callType = 'incoming';
   if (call.callType == CallType.outgoing) callType = 'outgoing';
-  if (call.callType == CallType.missed) callType = 'missed';
-
-  final db = await DatabaseService.db;
+  if (call.callType == CallType.missed)   callType = 'missed';
 
   // Save lead
   try {
-    final existing = await db.query(
-      'leads',
-      where: 'phone = ? AND type = ? AND timestamp = ?',
-      whereArgs: [call.number, callType, call.timestamp],
-    );
-    if (existing.isEmpty) {
-      await db.insert('leads', {
-        'phone': call.number,
-        'type': callType,
-        'timestamp': call.timestamp ?? DateTime.now().millisecondsSinceEpoch,
-        'source': 'auto_detected',
-        'blocked': 0,
-        'count': 1,
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
-    }
+    await _withDb((db) => db.insert('leads', {
+      'phone':     call.number,
+      'type':      callType,
+      'timestamp': call.timestamp ?? DateTime.now().millisecondsSinceEpoch,
+      'source':    'auto_detected',
+      'blocked':   0,
+      'count':     1,
+    }, conflictAlgorithm: ConflictAlgorithm.replace));
   } catch (e) {
-    print('❌ Failed to save lead: $e');
+    debugPrint('❌ save lead error: $e');
   }
 
   await NotificationService().notifyCallDetected(call.number!, callType);
 
-  // ✅ Dedup check — don't send if already sent today for this call type
+  // Dedup check
   final alreadySent = await _wasAnySmsAlreadySent(call.number!, callType);
-  if (alreadySent) {
-    print(
-      '⏭️ SMS already sent to ${call.number} for $callType today — skipping',
-    );
-    return;
-  }
+  if (alreadySent) return;
 
   await _triggerAutoSmsRules(call.number!, callType);
 }
 
 Future<bool> _wasAnySmsAlreadySent(String phone, String callType) async {
   try {
-    final db = await DatabaseService.db;
-    final result = await db.query(
-      'sms_sent_log',
-      where: 'phone = ? AND call_type = ?',
-      whereArgs: [phone, callType],
-    );
-    return result.isNotEmpty;
-  } catch (e) {
-    return false;
-  }
+    return await _withDb((db) async {
+      final r = await db.query('sms_sent_log',
+        where: 'phone = ? AND call_type = ?', whereArgs: [phone, callType]);
+      return r.isNotEmpty;
+    });
+  } catch (_) { return false; }
 }
 
-// ─── Auto SMS rules ───────────────────────────────────────────────
-
+// ── Auto SMS rules ────────────────────────────────────────────────
 Future<void> _triggerAutoSmsRules(String phone, String callType) async {
-  final db = await DatabaseService.db;
-
   try {
-    final rules = await db.query(
-      'auto_sms_rules',
-      where: 'trigger_type = ? AND is_active = 1',
-      whereArgs: [callType],
-    );
+    final rules = await _withDb((db) => db.query('auto_sms_rules',
+      where: 'trigger_type = ? AND is_active = 1', whereArgs: [callType]));
 
     if (rules.isEmpty) return;
 
-    for (var rule in rules) {
-      final templateId = rule['template_id'] as int?;
-      final customMessage = rule['custom_message'] as String?;
+    for (final rule in rules) {
+      final ruleId       = rule['id'] as int?;
+      final templateId   = rule['template_id'] as int?;
+      final customMsg    = rule['custom_message'] as String?;
       final delayMinutes = rule['delay_minutes'] as int? ?? 0;
-      final ruleId = rule['id'] as int?;
-
       if (ruleId == null) continue;
 
-      // ✅ Per-rule dedup check
-      final alreadySentForRule = await _wasSmsSentForRule(phone, ruleId);
-      if (alreadySentForRule) {
-        print('⏭️ SMS already sent for rule $ruleId to $phone, skipping');
-        continue;
-      }
+      final alreadySent = await _wasSmsSentForRule(phone, ruleId);
+      if (alreadySent) continue;
 
+      // Get message
       String message = '';
-      if (customMessage != null && customMessage.isNotEmpty) {
-        message = customMessage;
+      if (customMsg != null && customMsg.isNotEmpty) {
+        message = customMsg;
       } else if (templateId != null) {
-        final templates = await db.query(
-          'templates',
-          where: 'id = ?',
-          whereArgs: [templateId],
-        );
+        final templates = await _withDb((db) => db.query('templates',
+          where: 'id = ?', whereArgs: [templateId]));
         if (templates.isEmpty) continue;
         message = templates.first['message'] as String? ?? '';
       }
-
-      if (message.isEmpty) {
-        print('⚠️ No message found for rule ${rule['name']}, skipping');
-        continue;
-      }
+      if (message.isEmpty) continue;
 
       if (delayMinutes == 0) {
-        await _sendSmsNow(phone, message);
-        await _logAutoSms(phone, message, callType, ruleId);
+        await _sendSmsViaNative(phone, message);
+        await _logAutoSmsIsolated(phone, message, callType, ruleId);
         await _markSmsSent(phone, ruleId, callType);
       } else {
-        // ✅ Check if already scheduled
-        final alreadyScheduled = await db.query(
-          'scheduled_sms',
+        final existing = await _withDb((db) => db.query('scheduled_sms',
           where: 'phone = ? AND rule_id = ? AND status = "pending"',
-          whereArgs: [phone, ruleId],
-        );
-        if (alreadyScheduled.isNotEmpty) continue;
+          whereArgs: [phone, ruleId]));
+        if (existing.isNotEmpty) continue;
 
-        await db.insert('scheduled_sms', {
-          'phone': phone,
-          'message': message,
-          'rule_id': ruleId,
-          'call_type': callType,
+        await _withDb((db) => db.insert('scheduled_sms', {
+          'phone':        phone,
+          'message':      message,
+          'rule_id':      ruleId,
+          'call_type':    callType,
           'scheduled_at': DateTime.now().millisecondsSinceEpoch,
-          'send_at': DateTime.now()
-              .add(Duration(minutes: delayMinutes))
-              .millisecondsSinceEpoch,
-          'status': 'pending',
-        });
+          'send_at':      DateTime.now()
+              .add(Duration(minutes: delayMinutes)).millisecondsSinceEpoch,
+          'status':       'pending',
+        }));
         await _markSmsSent(phone, ruleId, callType);
-        print('⏰ SMS scheduled for ${delayMinutes}min to $phone');
       }
     }
   } catch (e) {
-    print('❌ Error triggering rules: $e');
+    debugPrint('❌ triggerAutoSmsRules error: $e');
   }
 }
 
 Future<bool> _wasSmsSentForRule(String phone, int ruleId) async {
   try {
-    final db = await DatabaseService.db;
-    final result = await db.query(
-      'sms_sent_log',
-      where: 'phone = ? AND rule_id = ?',
-      whereArgs: [phone, ruleId],
-    );
-    return result.isNotEmpty;
-  } catch (e) {
-    return false;
-  }
+    return await _withDb((db) async {
+      final r = await db.query('sms_sent_log',
+        where: 'phone = ? AND rule_id = ?', whereArgs: [phone, ruleId]);
+      return r.isNotEmpty;
+    });
+  } catch (_) { return false; }
 }
 
 Future<void> _markSmsSent(String phone, int ruleId, String callType) async {
   try {
-    final db = await DatabaseService.db;
-    await db.insert('sms_sent_log', {
-      'phone': phone,
-      'rule_id': ruleId,
+    await _withDb((db) => db.insert('sms_sent_log', {
+      'phone':     phone,
+      'rule_id':   ruleId,
       'call_type': callType,
-      'sent_at': DateTime.now().millisecondsSinceEpoch,
-    }, conflictAlgorithm: ConflictAlgorithm.ignore);
+      'sent_at':   DateTime.now().millisecondsSinceEpoch,
+    }, conflictAlgorithm: ConflictAlgorithm.ignore));
   } catch (e) {
-    print('⚠️ Could not mark SMS sent: $e');
+    debugPrint('⚠️ markSmsSent error: $e');
   }
 }
 
-// ─── SMS sending ──────────────────────────────────────────────────
-
-Future<void> _sendSmsNow(String phone, String message) async {
+// ── SMS sending ───────────────────────────────────────────────────
+// ✅ Use native Kotlin SMS only — removed another_telephony
+// Routes through the native SmsManager via MethodChannel
+Future<void> _sendSmsViaNative(String phone, String message) async {
   try {
-    final telephony = Telephony.instance;
-    await telephony.sendSms(to: phone, message: message);
-    print('📤 SMS sent to $phone');
+    const channel = MethodChannel('com.nextracom.smartpinger/settings');
+    await channel.invokeMethod('sendSms', {
+      'phone':   phone,
+      'message': message,
+    });
+    debugPrint('📤 SMS sent to $phone via native');
   } catch (e) {
-    print('❌ SMS failed to $phone: $e');
-    // ✅ Fallback — queue as scheduled so it retries
+    debugPrint('❌ Native SMS failed to $phone: $e');
+    // Queue for retry
     try {
-      final db = await DatabaseService.db;
-      await db.insert('scheduled_sms', {
-        'phone': phone,
-        'message': message,
-        'rule_id': null,
-        'call_type': 'retry',
+      await _withDb((db) => db.insert('scheduled_sms', {
+        'phone':        phone,
+        'message':      message,
+        'rule_id':      null,
+        'call_type':    'retry',
         'scheduled_at': DateTime.now().millisecondsSinceEpoch,
-        'send_at': DateTime.now()
-            .add(const Duration(minutes: 2))
-            .millisecondsSinceEpoch,
-        'status': 'pending',
-      });
-      print('🔄 Queued SMS for retry in 2 minutes');
+        'send_at':      DateTime.now()
+            .add(const Duration(minutes: 2)).millisecondsSinceEpoch,
+        'status':       'pending',
+      }));
     } catch (_) {}
   }
 }
 
+// ── Scheduled SMS ─────────────────────────────────────────────────
 Future<void> _processPendingScheduledSms() async {
-  final db = await DatabaseService.db;
-  final now = DateTime.now().millisecondsSinceEpoch;
-
   try {
-    final pending = await db.query(
-      'scheduled_sms',
-      where: "status = 'pending' AND send_at <= ?",
-      whereArgs: [now],
-    );
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final pending = await _withDb((db) => db.query('scheduled_sms',
+      where: "status = 'pending' AND send_at <= ?", whereArgs: [now]));
 
-    if (pending.isEmpty) return;
-
-    print('⏰ Sending ${pending.length} scheduled SMS...');
-
-    for (var sms in pending) {
-      final phone = sms['phone'] as String?;
+    for (final sms in pending) {
+      final phone   = sms['phone']   as String?;
       final message = sms['message'] as String?;
-      final smsId = sms['id'] as int?;
+      final smsId   = sms['id']      as int?;
       if (phone == null || message == null) continue;
 
       try {
-        final telephony = Telephony.instance;
-        await telephony.sendSms(to: phone, message: message);
+        await _sendSmsViaNative(phone, message);
         if (smsId != null) {
-          await db.update(
-            'scheduled_sms',
+          await _withDb((db) => db.update('scheduled_sms',
             {'status': 'sent', 'sent_at': now},
-            where: 'id = ?',
-            whereArgs: [smsId],
-          );
+            where: 'id = ?', whereArgs: [smsId]));
         }
-        print('✅ Sent scheduled SMS to $phone');
       } catch (e) {
         if (smsId != null) {
-          await db.update(
-            'scheduled_sms',
+          await _withDb((db) => db.update('scheduled_sms',
             {'status': 'failed', 'error': e.toString()},
-            where: 'id = ?',
-            whereArgs: [smsId],
-          );
+            where: 'id = ?', whereArgs: [smsId]));
         }
-        print('❌ Failed scheduled SMS to $phone: $e');
       }
     }
   } catch (e) {
-    print('❌ Error processing scheduled SMS: $e');
+    debugPrint('❌ processPendingScheduledSms error: $e');
   }
 }
 
-Future<void> _logAutoSms(
-  String phone,
-  String message,
-  String callType,
-  int? ruleId,
-) async {
-  final db = await DatabaseService.db;
+// ── SMS log ───────────────────────────────────────────────────────
+Future<void> _logAutoSmsIsolated(
+    String phone, String message, String callType, int? ruleId) async {
   try {
-    await db.insert('auto_sms_logs', {
-      'phone': phone,
-      'message': message,
+    await _withDb((db) => db.insert('auto_sms_logs', {
+      'phone':     phone,
+      'message':   message,
       'call_type': callType,
-      'rule_id': ruleId,
-      'sent_at': DateTime.now().millisecondsSinceEpoch,
-      'status': 'sent',
-    });
+      'rule_id':   ruleId,
+      'sent_at':   DateTime.now().millisecondsSinceEpoch,
+      'status':    'sent',
+    }));
   } catch (e) {
-    print('❌ Failed to log SMS: $e');
+    debugPrint('❌ logAutoSms error: $e');
   }
 }
 
-// ─── Service manager ──────────────────────────────────────────────
-
+// ── Service manager ───────────────────────────────────────────────
 class BackgroundServiceManager {
   static Future<void> initialize() async {
     final service = FlutterBackgroundService();
-
     await service.configure(
       androidConfiguration: AndroidConfiguration(
         onStart: onBackgroundServiceStart,
         autoStart: true,
         isForegroundMode: true,
         notificationChannelId: 'auto_sms_channel',
-        initialNotificationTitle: 'Auto SMS Active',
-        initialNotificationContent: 'Monitoring calls for auto-replies',
+        initialNotificationTitle: 'Smart Pinger Active',
+        initialNotificationContent: 'Monitoring calls for auto SMS',
         foregroundServiceNotificationId: 888,
         foregroundServiceTypes: [AndroidForegroundType.specialUse],
       ),
@@ -517,22 +420,17 @@ class BackgroundServiceManager {
 
   static Future<void> start() async {
     final service = FlutterBackgroundService();
-    final isRunning = await service.isRunning();
-    if (!isRunning) {
-      await service.startService();
-    }
+    if (!await service.isRunning()) await service.startService();
   }
 
   static Future<void> stop() async {
-    final service = FlutterBackgroundService();
-    service.invoke('stop');
+    FlutterBackgroundService().invoke('stop');
   }
 
   static Future<bool> isRunning() async {
-    return await FlutterBackgroundService().isRunning();
+    return FlutterBackgroundService().isRunning();
   }
 
-  // ✅ Call this whenever rules are saved or updated
   static Future<void> syncRulesToNative({bool? enabled}) async {
     await _syncRulesToNative(enabled: enabled);
   }

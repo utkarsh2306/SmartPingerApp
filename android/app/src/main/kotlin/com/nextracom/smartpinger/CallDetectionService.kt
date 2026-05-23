@@ -1,4 +1,4 @@
-package com.example.message_me
+package com.nextracom.smartpinger
 
 import android.Manifest
 import android.app.AlarmManager
@@ -420,7 +420,7 @@ class CallDetectionService : Service() {
 
             try {
                 val broadcastIntent = Intent(
-                    "com.example.message_me.SMS_SENT_BY_NATIVE"
+                    "com.nextracom.smartpinger.SMS_SENT_BY_NATIVE"
                 ).apply {
                     putExtra("phone", phone)
                     putExtra("call_type", callType)

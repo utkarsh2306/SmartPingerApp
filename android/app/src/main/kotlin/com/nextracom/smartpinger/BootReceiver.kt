@@ -1,4 +1,4 @@
-package com.example.message_me
+package com.nextracom.smartpinger
 
 import android.content.BroadcastReceiver
 import android.content.Context

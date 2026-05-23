@@ -21,7 +21,7 @@ class _PermissionSetupScreenState extends State<PermissionSetupScreen> {
   bool _overlayGranted = false;
   bool _batteryGranted = false;
 
-  static const _platform = MethodChannel('com.example.message_me/settings');
+  static const _platform = MethodChannel('com.nextracom.smartpinger/settings');
 
   @override
   void initState() {

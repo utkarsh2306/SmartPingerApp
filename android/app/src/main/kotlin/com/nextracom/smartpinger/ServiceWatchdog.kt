@@ -1,4 +1,4 @@
-package com.example.message_me
+package com.nextracom.smartpinger
 
 import android.app.AlarmManager
 import android.app.PendingIntent
@@ -11,7 +11,7 @@ class ServiceWatchdog : BroadcastReceiver() {
 
     companion object {
         const val TAG = "SmartPinger"
-        const val ACTION = "com.example.message_me.WATCHDOG"
+        const val ACTION = "com.nextracom.smartpinger.WATCHDOG"
         private const val INTERVAL_MS = 5 * 60 * 1000L // 5 minutes
 
         fun schedule(context: Context) {

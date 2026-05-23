@@ -8,8 +8,8 @@ plugins {
 }
 
 android {
-    namespace = "com.example.message_me"
-    compileSdk = 36  // ✅ Updated from 34 to 36
+    namespace = "com.nextracom.smartpinger"
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -23,9 +23,9 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.message_me"
+        applicationId = "com.nextracom.smartpinger"
         minSdk = flutter.minSdkVersion
-        targetSdk = 34  // Keep at 34 for production (runtime behavior)
+        targetSdk = 34
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }

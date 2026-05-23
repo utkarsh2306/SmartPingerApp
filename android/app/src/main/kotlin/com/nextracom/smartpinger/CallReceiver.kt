@@ -1,4 +1,4 @@
-package com.example.message_me
+package com.nextracom.smartpinger
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -138,7 +138,7 @@ class CallReceiver : BroadcastReceiver() {
         message: String
     ) {
         try {
-            val intent = Intent("com.example.message_me.SMS_SENT_BY_NATIVE").apply {
+            val intent = Intent("com.nextracom.smartpinger.SMS_SENT_BY_NATIVE").apply {
                 putExtra("phone", phone)
                 putExtra("call_type", callType)
                 putExtra("message", message)

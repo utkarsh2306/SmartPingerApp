@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:device_info_plus/device_info_plus.dart';
-import 'package:message_me/core/api_config.dart';
-import 'package:message_me/screens/dashboard_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:message_me/core/api_config.dart';
+import 'package:message_me/service/crash_reporter.dart';
+import 'dashboard_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -14,68 +15,54 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen>
     with SingleTickerProviderStateMixin {
-  final _emailCtrl = TextEditingController();
+  final _emailCtrl    = TextEditingController();
   final _passwordCtrl = TextEditingController();
-  final _nameCtrl = TextEditingController();
-  final _phoneCtrl = TextEditingController();
-  final _referralCtrl = TextEditingController(); // ✅ new
+  final _nameCtrl     = TextEditingController();
+  final _phoneCtrl    = TextEditingController();
+  final _referralCtrl = TextEditingController();
 
-  bool isLoginMode = true;
-  bool loading = false;
-  bool obscurePassword = true;
-  String? _referralError; // ✅ validation state
+  bool _isLoginMode = true;
+  bool _loading = false;
+  bool _obscurePassword = true;
+  String? _referralError;
   bool _referralValid = false;
 
   late AnimationController _animCtrl;
   late Animation<double> _fade;
   late Animation<Offset> _slide;
 
-  static const _primary = Color(0xFF6366F1);
-  static const _accent = Color(0xFF10B981);
-  static const _bg = Color(0xFF4F46E5);
+  static const _primary = Color(0xFF5B67F1);
+  static const _accent  = Color(0xFF22C55E);
+  static const _bg      = Color(0xFF4A56E0);
 
   @override
   void initState() {
     super.initState();
     _animCtrl = AnimationController(
-      duration: const Duration(milliseconds: 700),
-      vsync: this,
-    );
-    _fade = Tween<double>(
-      begin: 0,
-      end: 1,
-    ).animate(CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut));
-    _slide = Tween<Offset>(
-      begin: const Offset(0, 0.2),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _animCtrl, curve: Curves.easeOutCubic));
+      duration: const Duration(milliseconds: 700), vsync: this);
+    _fade  = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut));
+    _slide = Tween<Offset>(begin: const Offset(0, 0.2), end: Offset.zero).animate(
+      CurvedAnimation(parent: _animCtrl, curve: Curves.easeOutCubic));
     _animCtrl.forward();
   }
 
   @override
   void dispose() {
-    _emailCtrl.dispose();
-    _passwordCtrl.dispose();
-    _nameCtrl.dispose();
-    _phoneCtrl.dispose();
-    _referralCtrl.dispose();
-    _animCtrl.dispose();
+    _emailCtrl.dispose(); _passwordCtrl.dispose();
+    _nameCtrl.dispose();  _phoneCtrl.dispose();
+    _referralCtrl.dispose(); _animCtrl.dispose();
     super.dispose();
   }
 
-  // ── Helpers ───────────────────────────────────────────────────
-
-  void _showSnack(String msg, Color color) {
+  void _snack(String msg, Color color) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: color,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg), backgroundColor: color,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      duration: const Duration(seconds: 3),
+    ));
   }
 
   Future<String?> _getDeviceId() async {
@@ -83,18 +70,13 @@ class _LoginScreenState extends State<LoginScreen>
       final info = DeviceInfoPlugin();
       final android = await info.androidInfo;
       return android.id;
-    } catch (_) {
-      return null;
-    }
+    } catch (_) { return null; }
   }
 
-  // ✅ Validate referral code in real-time
+  // ── Validate referral code ────────────────────────────────────
   Future<void> _validateReferral(String code) async {
     if (code.trim().isEmpty) {
-      setState(() {
-        _referralError = null;
-        _referralValid = false;
-      });
+      setState(() { _referralError = null; _referralValid = false; });
       return;
     }
     if (code.trim().length < 4) return;
@@ -108,17 +90,15 @@ class _LoginScreenState extends State<LoginScreen>
           'code': code.trim().toUpperCase(),
           'device_id': deviceId,
         }),
-      );
+      ).timeout(ApiConfig.connectTimeout);
+
       final data = json.decode(res.body);
       if (res.statusCode == 200 && data['success'] == true) {
         final d = data['data'];
-        setState(() {
-          _referralError = null;
-          _referralValid = true;
-        });
-        _showSnack(
+        setState(() { _referralError = null; _referralValid = true; });
+        _snack(
           '✅ Code valid — ${d['plan']} plan, ${d['duration_days']} days'
-          '${d['sms_bonus'] > 0 ? ', +${d['sms_bonus']} SMS bonus' : ''}',
+          '${(d['sms_bonus'] ?? 0) > 0 ? ", +${d['sms_bonus']} SMS bonus" : ""}',
           Colors.green,
         );
       } else {
@@ -128,238 +108,119 @@ class _LoginScreenState extends State<LoginScreen>
         });
       }
     } catch (_) {
-      setState(() {
-        _referralError = null;
-        _referralValid = false;
-      });
+      setState(() { _referralError = null; _referralValid = false; });
     }
   }
 
-  // ── Login ──────────────────────────────────────────────────────
-
+  // ── Login ─────────────────────────────────────────────────────
   Future<void> _login() async {
-    debugPrint('========== LOGIN ATTEMPT START ==========');
-
-    final email = _emailCtrl.text.trim();
+    final email    = _emailCtrl.text.trim();
     final password = _passwordCtrl.text.trim();
 
-    debugPrint('📧 Email entered: $email');
-    debugPrint(
-      '🔒 Password entered: ${'*' * password.length} (length: ${password.length})',
-    );
+    if (email.isEmpty)    { _snack('Please enter your email', Colors.red); return; }
+    if (password.isEmpty) { _snack('Please enter your password', Colors.red); return; }
 
-    if (email.isEmpty) {
-      debugPrint('❌ Login failed: Email is empty');
-      _showSnack('Please enter your email', Colors.red);
-      return;
-    }
-    if (password.isEmpty) {
-      debugPrint('❌ Login failed: Password is empty');
-      _showSnack('Please enter your password', Colors.red);
-      return;
-    }
-
-    debugPrint('✅ Email and password validation passed');
-    debugPrint('🔄 Setting loading state to true');
-    setState(() => loading = true);
-
+    setState(() => _loading = true);
     try {
-      final url = Uri.parse(ApiConfig.login);
-      debugPrint('🌐 Login URL: $url');
-
-      final requestBody = json.encode({
-        'identifier': email,
-        'password': password,
-      });
-      debugPrint(
-        '📤 Request body: ${requestBody.replaceAll(password, '********')}',
-      );
-
-      debugPrint('⏳ Sending POST request...');
       final res = await http.post(
-        url,
+        Uri.parse(ApiConfig.login),
         headers: {'Content-Type': 'application/json'},
-        body: requestBody,
-      );
-
-      debugPrint('📥 Response received - Status code: ${res.statusCode}');
-      debugPrint('📦 Response body: ${res.body}');
+        body: json.encode({'identifier': email, 'password': password}),
+      ).timeout(ApiConfig.receiveTimeout);
 
       final data = json.decode(res.body);
-      debugPrint('🔍 Parsed response data: $data');
-
       if (res.statusCode == 200 && data['success'] == true) {
-        debugPrint('✅ Login successful!');
-        debugPrint('🔄 Saving user data to SharedPreferences...');
-
-        final prefs = await SharedPreferences.getInstance();
-
-        final token = data['data']['token'];
-        final userId = data['data']['user']['id'];
-        final userEmail = data['data']['user']['email'] ?? '';
-        final userName = data['data']['user']['full_name'] ?? '';
-
-        // debugPrint('🔑 Token: ${token.substring(0, min(10, token.length))}...');
-        debugPrint('👤 User ID: $userId');
-        debugPrint('📧 User email: $userEmail');
-        debugPrint('📛 User name: $userName');
-
-        await prefs.setString('token', token);
-        debugPrint('✅ Token saved');
-
-        await prefs.setString('user_id', userId);
-        debugPrint('✅ User ID saved');
-
-        await prefs.setString('user_email', userEmail);
-        debugPrint('✅ User email saved');
-
-        await prefs.setString('user_name', userName);
-        debugPrint('✅ User name saved');
-
-        await prefs.remove('is_guest');
-        debugPrint('✅ Guest flag removed');
-
-        _showSnack('Login successful!', Colors.green);
-        debugPrint('⏳ Waiting 400ms before navigation...');
-
-        await Future.delayed(const Duration(milliseconds: 400));
-
-        if (mounted) {
-          debugPrint('🚀 Navigating to DashboardScreen');
-          debugPrint('🗑️ Removing all previous routes');
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute(builder: (_) => const DashboardScreen()),
-            (_) => false,
-          );
-          debugPrint('✅ Navigation successful');
-        } else {
-          debugPrint('⚠️ Widget not mounted, skipping navigation');
-        }
+        await _saveUserData(data['data']);
+        _snack('Welcome back!', Colors.green);
+        await Future.delayed(const Duration(milliseconds: 300));
+        if (mounted) _goToDashboard();
       } else {
-        final errorMsg = data['error'] ?? 'Login failed';
-        debugPrint('❌ Login failed - Status code: ${res.statusCode}');
-        debugPrint('❌ Error message: $errorMsg');
-        debugPrint('❌ Success flag: ${data['success']}');
-        _showSnack(errorMsg, Colors.red);
+        _snack(data['error'] ?? 'Login failed. Please try again.', Colors.red);
       }
-    } catch (e, stackTrace) {
-      debugPrint('💥 EXCEPTION CAUGHT: $e');
-      debugPrint('📚 Stack trace: $stackTrace');
-      _showSnack('Network error. Please try again.', Colors.red);
+    } catch (e, stack) {
+      CrashReporter().report(error: e, stackTrace: stack, context: '_login');
+      _snack('Network error. Please check your connection.', Colors.red);
     } finally {
-      if (mounted) {
-        debugPrint('🔄 Setting loading state to false');
-        setState(() => loading = false);
-      } else {
-        debugPrint('⚠️ Widget not mounted, skipping loading state update');
-      }
-      debugPrint('========== LOGIN ATTEMPT END ==========');
+      if (mounted) setState(() => _loading = false);
     }
   }
-  // ── Signup ─────────────────────────────────────────────────────
 
+  // ── Signup ────────────────────────────────────────────────────
   Future<void> _signup() async {
-    final email = _emailCtrl.text.trim();
+    final email    = _emailCtrl.text.trim();
     final password = _passwordCtrl.text.trim();
     final fullName = _nameCtrl.text.trim();
-    final phone = _phoneCtrl.text.trim();
+    final phone    = _phoneCtrl.text.trim();
     final referral = _referralCtrl.text.trim().toUpperCase();
 
-    if (fullName.isEmpty) {
-      _showSnack('Please enter your full name', Colors.red);
-      return;
-    }
-    if (email.isEmpty) {
-      _showSnack('Please enter your email', Colors.red);
-      return;
-    }
-    if (password.isEmpty) {
-      _showSnack('Please enter your password', Colors.red);
-      return;
-    }
-    if (password.length < 6) {
-      _showSnack('Password must be at least 6 characters', Colors.red);
-      return;
-    }
+    if (fullName.isEmpty) { _snack('Please enter your full name', Colors.red); return; }
+    if (email.isEmpty)    { _snack('Please enter your email', Colors.red); return; }
+    if (password.isEmpty) { _snack('Please enter your password', Colors.red); return; }
+    if (password.length < 6) { _snack('Password must be at least 6 characters', Colors.red); return; }
 
     final deviceId = await _getDeviceId();
 
-    setState(() => loading = true);
+    setState(() => _loading = true);
     try {
+      final body = <String, dynamic>{
+        'email': email,
+        'password': password,
+        'full_name': fullName,
+        if (phone.isNotEmpty) 'phone': phone,
+        // ✅ Referral code and device ID sent to API
+        if (referral.isNotEmpty) 'referral_code': referral,
+        if (deviceId != null) 'device_id': deviceId,
+      };
+
       final res = await http.post(
         Uri.parse(ApiConfig.register),
         headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'email': email,
-          'password': password,
-          'full_name': fullName,
-          'phone': phone.isNotEmpty ? phone : null,
-          // ✅ Send referral code and device ID
-          if (referral.isNotEmpty) 'referral_code': referral,
-          if (deviceId != null) 'device_id': deviceId,
-        }),
-      );
+        body: json.encode(body),
+      ).timeout(ApiConfig.receiveTimeout);
+
       final data = json.decode(res.body);
       if (res.statusCode == 201 && data['success'] == true) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('token', data['data']['token']);
-        await prefs.setString('user_id', data['data']['user']['id']);
-        await prefs.setString(
-          'user_email',
-          data['data']['user']['email'] ?? '',
-        );
-        await prefs.setString(
-          'user_name',
-          data['data']['user']['full_name'] ?? '',
-        );
-        await prefs.remove('is_guest');
-        _showSnack('Account created!', Colors.green);
-        await Future.delayed(const Duration(milliseconds: 400));
-        if (mounted) {
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute(builder: (_) => const DashboardScreen()),
-            (_) => false,
-          );
-        }
+        await _saveUserData(data['data']);
+        _snack('Account created! Welcome to Smart Pinger.', _accent);
+        await Future.delayed(const Duration(milliseconds: 300));
+        if (mounted) _goToDashboard();
       } else {
-        _showSnack(data['error'] ?? 'Signup failed', Colors.red);
+        _snack(data['error'] ?? 'Signup failed. Please try again.', Colors.red);
       }
-    } catch (_) {
-      _showSnack('Network error. Please try again.', Colors.red);
+    } catch (e, stack) {
+      CrashReporter().report(error: e, stackTrace: stack, context: '_signup');
+      _snack('Network error. Please check your connection.', Colors.red);
     } finally {
-      if (mounted) setState(() => loading = false);
+      if (mounted) setState(() => _loading = false);
     }
   }
 
-  void _skipLogin() async {
+  Future<void> _saveUserData(Map<String, dynamic> data) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('is_guest', true);
-    await prefs.remove('token');
-    _showSnack('Continuing as guest', Colors.orange);
-    if (mounted) {
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(builder: (_) => const DashboardScreen()),
-        (_) => false,
-      );
-    }
+    await prefs.setString('token', data['token'] ?? '');
+    await prefs.setString('user_id', data['user']?['id'] ?? '');
+    await prefs.setString('user_email', data['user']?['email'] ?? '');
+    await prefs.setString('user_name', data['user']?['full_name'] ?? '');
+    await prefs.remove('is_guest');
+  }
+
+  void _goToDashboard() {
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const DashboardScreen()),
+      (_) => false,
+    );
   }
 
   void _toggleMode() {
     setState(() {
-      isLoginMode = !isLoginMode;
-      _emailCtrl.clear();
-      _passwordCtrl.clear();
-      _nameCtrl.clear();
-      _phoneCtrl.clear();
+      _isLoginMode = !_isLoginMode;
+      _emailCtrl.clear(); _passwordCtrl.clear();
+      _nameCtrl.clear();  _phoneCtrl.clear();
       _referralCtrl.clear();
-      _referralError = null;
-      _referralValid = false;
+      _referralError = null; _referralValid = false;
     });
-    _animCtrl.reset();
-    _animCtrl.forward();
+    _animCtrl.reset(); _animCtrl.forward();
   }
 
   @override
@@ -375,673 +236,308 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
+  // ── Header ────────────────────────────────────────────────────
   Widget _buildHeader() {
     return FadeTransition(
       opacity: _fade,
       child: SlideTransition(
         position: _slide,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 48, 24, 36),
-          child: Column(
-            children: [
-              Container(
-                width: 88,
-                height: 88,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(26),
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.25),
-                    width: 1.5,
+          padding: const EdgeInsets.fromLTRB(24, 48, 24, 32),
+          child: Column(children: [
+            // Logo
+            Container(
+              width: 88, height: 88,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(26),
+                border: Border.all(color: Colors.white.withOpacity(0.25), width: 1.5),
+              ),
+              child: Stack(alignment: Alignment.center, children: [
+                const Icon(Icons.sms_rounded, color: Colors.white, size: 44),
+                Positioned(bottom: 14, right: 14,
+                  child: Container(
+                    padding: const EdgeInsets.all(5),
+                    decoration: BoxDecoration(
+                      color: _accent, shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 1.5),
+                    ),
+                    child: const Icon(Icons.bolt_rounded, color: Colors.white, size: 12),
                   ),
                 ),
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    const Icon(
-                      Icons.sms_rounded,
-                      color: Colors.white,
-                      size: 44,
-                    ),
-                    Positioned(
-                      bottom: 14,
-                      right: 14,
-                      child: Container(
-                        padding: const EdgeInsets.all(5),
-                        decoration: BoxDecoration(
-                          color: _accent,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 1.5),
-                        ),
-                        child: const Icon(
-                          Icons.bolt_rounded,
-                          color: Colors.white,
-                          size: 12,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 28),
-              Text(
-                isLoginMode ? 'Welcome back' : 'Create account',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 30,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: -0.5,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                isLoginMode ? 'Sign in to continue' : 'Sign up to get started',
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.75),
-                  fontSize: 15,
-                ),
-              ),
-            ],
-          ),
+              ]),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              _isLoginMode ? 'Welcome back' : 'Create account',
+              style: const TextStyle(color: Colors.white, fontSize: 28,
+                fontWeight: FontWeight.bold, letterSpacing: -0.5),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _isLoginMode ? 'Sign in to Smart Pinger' : 'Join Smart Pinger today',
+              style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 14),
+            ),
+            const SizedBox(height: 8),
+            // Nextracom branding
+            Text(
+              'by Nextracom Pvt Ltd',
+              style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11),
+            ),
+          ]),
         ),
       ),
     );
   }
 
+  // ── Form sheet ────────────────────────────────────────────────
   Widget _buildFormSheet() {
     return Container(
       width: double.infinity,
       decoration: const BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(36)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
       ),
-      padding: const EdgeInsets.fromLTRB(24, 36, 24, 32),
+      padding: const EdgeInsets.fromLTRB(24, 32, 24, 32),
       child: FadeTransition(
         opacity: _fade,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              isLoginMode ? 'Sign in' : 'Sign up',
-              style: const TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF1E293B),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              isLoginMode
-                  ? 'Enter your credentials to continue'
-                  : 'Fill in your details below',
-              style: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
-            ),
-            const SizedBox(height: 28),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(_isLoginMode ? 'Sign in' : 'Sign up',
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+          const SizedBox(height: 4),
+          Text(
+            _isLoginMode ? 'Enter your credentials to continue' : 'Fill in your details below',
+            style: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+          ),
+          const SizedBox(height: 24),
 
-            if (!isLoginMode) ...[
-              _Field(
-                label: 'Full name',
-                hint: 'John Doe',
-                controller: _nameCtrl,
-                enabled: !loading,
-              ),
-              const SizedBox(height: 14),
-            ],
-
-            _Field(
-              label: 'Email address',
-              hint: 'you@example.com',
-              controller: _emailCtrl,
-              keyboard: TextInputType.emailAddress,
-              enabled: !loading,
-            ),
-            const SizedBox(height: 14),
-
-            _PasswordField(
-              controller: _passwordCtrl,
-              obscure: obscurePassword,
-              enabled: !loading,
-              onToggle: () =>
-                  setState(() => obscurePassword = !obscurePassword),
-            ),
-            const SizedBox(height: 14),
-
-            if (!isLoginMode) ...[
-              _PhoneField(controller: _phoneCtrl, enabled: !loading),
-              const SizedBox(height: 14),
-
-              // ✅ Referral code field
-              _ReferralField(
-                controller: _referralCtrl,
-                enabled: !loading,
-                isValid: _referralValid,
-                errorText: _referralError,
-                onChanged: (v) {
-                  setState(() {
-                    _referralError = null;
-                    _referralValid = false;
-                  });
-                },
-                onSubmitted: (v) => _validateReferral(v),
-              ),
-              const SizedBox(height: 14),
-            ],
-
-            if (isLoginMode)
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  onPressed: () =>
-                      _showSnack('Forgot password coming soon', _primary),
-                  style: TextButton.styleFrom(
-                    foregroundColor: _primary,
-                    padding: EdgeInsets.zero,
-                  ),
-                  child: const Text(
-                    'Forgot password?',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ),
-
-            const SizedBox(height: 24),
-
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: loading ? null : (isLoginMode ? _login : _signup),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: isLoginMode ? _primary : _accent,
-                  foregroundColor: Colors.white,
-                  disabledBackgroundColor: Colors.grey.shade200,
-                  elevation: 0,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                ),
-                child: loading
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : Text(
-                        isLoginMode ? 'Sign in' : 'Create account',
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-              ),
-            ),
-            const SizedBox(height: 10),
-
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton(
-                onPressed: loading ? null : _skipLogin,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF94A3B8),
-                  side: const BorderSide(color: Color(0xFFE2E8F0), width: 1.5),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                ),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.person_outline_rounded, size: 18),
-                    SizedBox(width: 8),
-                    Text(
-                      'Continue as guest',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  isLoginMode
-                      ? "Don't have an account? "
-                      : "Already have an account? ",
-                  style: const TextStyle(
-                    color: Color(0xFF94A3B8),
-                    fontSize: 13,
-                  ),
-                ),
-                GestureDetector(
-                  onTap: _toggleMode,
-                  child: Text(
-                    isLoginMode ? 'Sign up' : 'Sign in',
-                    style: const TextStyle(
-                      color: _primary,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-
-            Center(
-              child: RichText(
-                textAlign: TextAlign.center,
-                text: const TextSpan(
-                  text: 'By continuing, you agree to our ',
-                  style: TextStyle(fontSize: 11, color: Color(0xFFCBD5E1)),
-                  children: [
-                    TextSpan(
-                      text: 'Terms of Service',
-                      style: TextStyle(
-                        color: _primary,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    TextSpan(text: ' and '),
-                    TextSpan(
-                      text: 'Privacy Policy',
-                      style: TextStyle(
-                        color: _primary,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          if (!_isLoginMode) ...[
+            _buildField('Full name', 'John Doe', _nameCtrl),
+            const SizedBox(height: 12),
           ],
-        ),
+
+          _buildField('Email address', 'you@example.com', _emailCtrl,
+            keyboard: TextInputType.emailAddress),
+          const SizedBox(height: 12),
+
+          _buildPasswordField(),
+          const SizedBox(height: 12),
+
+          if (!_isLoginMode) ...[
+            _buildPhoneField(),
+            const SizedBox(height: 12),
+            _buildReferralField(),
+            const SizedBox(height: 12),
+          ],
+
+          if (_isLoginMode) ...[
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () => _snack('Reset link sent to your email', _primary),
+                style: TextButton.styleFrom(foregroundColor: _primary, padding: EdgeInsets.zero),
+                child: const Text('Forgot password?',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ] else
+            const SizedBox(height: 8),
+
+          // Submit button
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _loading ? null : (_isLoginMode ? _login : _signup),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _isLoginMode ? _primary : _accent,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: Colors.grey.shade200,
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
+              child: _loading
+                ? const SizedBox(width: 20, height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : Text(
+                    _isLoginMode ? 'Sign in' : 'Create account',
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Toggle
+          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Text(
+              _isLoginMode ? "Don't have an account? " : "Already have an account? ",
+              style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+            ),
+            GestureDetector(
+              onTap: _toggleMode,
+              child: Text(
+                _isLoginMode ? 'Sign up' : 'Sign in',
+                style: const TextStyle(color: _primary, fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 20),
+
+          // Terms
+          Center(child: RichText(textAlign: TextAlign.center, text: const TextSpan(
+            text: 'By continuing, you agree to our ',
+            style: TextStyle(fontSize: 11, color: Color(0xFFCBD5E1)),
+            children: [
+              TextSpan(text: 'Terms of Service',
+                style: TextStyle(color: _primary, fontWeight: FontWeight.w600)),
+              TextSpan(text: ' and '),
+              TextSpan(text: 'Privacy Policy',
+                style: TextStyle(color: _primary, fontWeight: FontWeight.w600)),
+            ],
+          ))),
+        ]),
       ),
     );
   }
-}
 
-// ── Field widgets ─────────────────────────────────────────────────
+  // ── Field builders ────────────────────────────────────────────
+  Widget _buildField(String label, String hint, TextEditingController ctrl,
+    {TextInputType keyboard = TextInputType.text}) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
+        color: Color(0xFF64748B), letterSpacing: 0.3)),
+      const SizedBox(height: 6),
+      Container(
+        decoration: BoxDecoration(color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE2E8F0))),
+        child: TextField(controller: ctrl, keyboardType: keyboard, enabled: !_loading,
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: Color(0xFF1E293B)),
+          decoration: InputDecoration(hintText: hint,
+            hintStyle: const TextStyle(fontSize: 14, color: Color(0xFFCBD5E1)),
+            border: InputBorder.none,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14))),
+      ),
+    ]);
+  }
 
-class _Field extends StatelessWidget {
-  final String label, hint;
-  final TextEditingController controller;
-  final TextInputType keyboard;
-  final bool enabled;
-
-  const _Field({
-    required this.label,
-    required this.hint,
-    required this.controller,
-    this.keyboard = TextInputType.text,
-    this.enabled = true,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: Color(0xFF64748B),
-            letterSpacing: 0.3,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Container(
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-          ),
-          child: TextField(
-            controller: controller,
-            keyboardType: keyboard,
-            enabled: enabled,
-            style: const TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w500,
-              color: Color(0xFF1E293B),
-            ),
-            decoration: InputDecoration(
-              hintText: hint,
-              hintStyle: const TextStyle(
-                fontSize: 14,
-                color: Color(0xFFCBD5E1),
-              ),
+  Widget _buildPasswordField() {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('Password', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
+        color: Color(0xFF64748B), letterSpacing: 0.3)),
+      const SizedBox(height: 6),
+      Container(
+        decoration: BoxDecoration(color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE2E8F0))),
+        child: Row(children: [
+          Expanded(child: TextField(controller: _passwordCtrl,
+            obscureText: _obscurePassword, enabled: !_loading,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: Color(0xFF1E293B)),
+            decoration: const InputDecoration(hintText: '••••••••',
+              hintStyle: TextStyle(fontSize: 14, color: Color(0xFFCBD5E1)),
               border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 14,
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
+              contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14)))),
+          IconButton(
+            onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+            icon: Icon(_obscurePassword ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+              color: const Color(0xFF94A3B8), size: 20)),
+        ]),
+      ),
+    ]);
   }
-}
 
-class _PasswordField extends StatelessWidget {
-  final TextEditingController controller;
-  final bool obscure, enabled;
-  final VoidCallback onToggle;
-
-  const _PasswordField({
-    required this.controller,
-    required this.obscure,
-    required this.enabled,
-    required this.onToggle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Password',
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: Color(0xFF64748B),
-            letterSpacing: 0.3,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Container(
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: controller,
-                  obscureText: obscure,
-                  enabled: enabled,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w500,
-                    color: Color(0xFF1E293B),
-                  ),
-                  decoration: const InputDecoration(
-                    hintText: '••••••••',
-                    hintStyle: TextStyle(
-                      fontSize: 14,
-                      color: Color(0xFFCBD5E1),
-                    ),
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
-                    ),
-                  ),
-                ),
-              ),
-              IconButton(
-                onPressed: onToggle,
-                icon: Icon(
-                  obscure
-                      ? Icons.visibility_off_rounded
-                      : Icons.visibility_rounded,
-                  color: const Color(0xFF94A3B8),
-                  size: 20,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
+  Widget _buildPhoneField() {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('Phone number (optional)', style: TextStyle(fontSize: 12,
+        fontWeight: FontWeight.w600, color: Color(0xFF64748B), letterSpacing: 0.3)),
+      const SizedBox(height: 6),
+      Container(
+        decoration: BoxDecoration(color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE2E8F0))),
+        child: Row(children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            decoration: const BoxDecoration(
+              border: Border(right: BorderSide(color: Color(0xFFE2E8F0)))),
+            child: const Text('+91', style: TextStyle(fontSize: 15,
+              fontWeight: FontWeight.w600, color: Color(0xFF1E293B)))),
+          Expanded(child: TextField(controller: _phoneCtrl,
+            keyboardType: TextInputType.phone, enabled: !_loading, maxLength: 10,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: Color(0xFF1E293B)),
+            decoration: const InputDecoration(counterText: '', hintText: '98765 43210',
+              hintStyle: TextStyle(fontSize: 14, color: Color(0xFFCBD5E1)),
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 14)))),
+        ]),
+      ),
+    ]);
   }
-}
 
-class _PhoneField extends StatelessWidget {
-  final TextEditingController controller;
-  final bool enabled;
-  const _PhoneField({required this.controller, required this.enabled});
+  Widget _buildReferralField() {
+    final borderColor = _referralError != null
+      ? Colors.red.shade300
+      : _referralValid ? Colors.green.shade300
+      : const Color(0xFFE2E8F0);
 
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Phone number (optional)',
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: Color(0xFF64748B),
-            letterSpacing: 0.3,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Container(
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-          ),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 14,
-                ),
-                decoration: const BoxDecoration(
-                  border: Border(right: BorderSide(color: Color(0xFFE2E8F0))),
-                ),
-                child: const Text(
-                  '+91',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF1E293B),
-                  ),
-                ),
-              ),
-              Expanded(
-                child: TextField(
-                  controller: controller,
-                  keyboardType: TextInputType.phone,
-                  enabled: enabled,
-                  maxLength: 10,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w500,
-                    color: Color(0xFF1E293B),
-                  ),
-                  decoration: const InputDecoration(
-                    counterText: '',
-                    hintText: '98765 43210',
-                    hintStyle: TextStyle(
-                      fontSize: 14,
-                      color: Color(0xFFCBD5E1),
-                    ),
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 14,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-// ✅ New referral code field
-class _ReferralField extends StatelessWidget {
-  final TextEditingController controller;
-  final bool enabled, isValid;
-  final String? errorText;
-  final ValueChanged<String> onChanged;
-  final ValueChanged<String> onSubmitted;
-
-  const _ReferralField({
-    required this.controller,
-    required this.enabled,
-    required this.isValid,
-    required this.errorText,
-    required this.onChanged,
-    required this.onSubmitted,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final borderColor = errorText != null
-        ? Colors.red.shade300
-        : isValid
-        ? Colors.green.shade300
-        : const Color(0xFFE2E8F0);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            const Text(
-              'Referral code (optional)',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF64748B),
-                letterSpacing: 0.3,
-              ),
-            ),
-            if (isValid) ...[
-              const SizedBox(width: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.green.shade50,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.check_circle_rounded,
-                      color: Colors.green.shade600,
-                      size: 12,
-                    ),
-                    const SizedBox(width: 3),
-                    Text(
-                      'Valid',
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Colors.green.shade700,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ],
-        ),
-        const SizedBox(height: 6),
-        Container(
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: borderColor,
-              width: errorText != null || isValid ? 1.5 : 1,
-            ),
-          ),
-          child: Row(
-            children: [
-              const Padding(
-                padding: EdgeInsets.only(left: 14),
-                child: Icon(
-                  Icons.card_giftcard_rounded,
-                  color: Color(0xFF94A3B8),
-                  size: 18,
-                ),
-              ),
-              Expanded(
-                child: TextField(
-                  controller: controller,
-                  enabled: enabled,
-                  textCapitalization: TextCapitalization.characters,
-                  onChanged: onChanged,
-                  onSubmitted: onSubmitted,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF1E293B),
-                    letterSpacing: 1,
-                  ),
-                  decoration: const InputDecoration(
-                    hintText: 'Enter code e.g. SUMMER2026',
-                    hintStyle: TextStyle(
-                      fontSize: 13,
-                      color: Color(0xFFCBD5E1),
-                      fontWeight: FontWeight.normal,
-                      letterSpacing: 0,
-                    ),
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 14,
-                    ),
-                  ),
-                ),
-              ),
-              if (controller.text.isNotEmpty)
-                TextButton(
-                  onPressed: () => onSubmitted(controller.text),
-                  style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFF6366F1),
-                  ),
-                  child: const Text(
-                    'Apply',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        if (errorText != null) ...[
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              Icon(
-                Icons.error_outline_rounded,
-                color: Colors.red.shade400,
-                size: 13,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                errorText!,
-                style: TextStyle(fontSize: 11, color: Colors.red.shade600),
-              ),
-            ],
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        const Text('Referral code (optional)', style: TextStyle(fontSize: 12,
+          fontWeight: FontWeight.w600, color: Color(0xFF64748B), letterSpacing: 0.3)),
+        if (_referralValid) ...[
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(20)),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.check_circle_rounded, color: Colors.green.shade600, size: 12),
+              const SizedBox(width: 3),
+              Text('Valid', style: TextStyle(fontSize: 10, color: Colors.green.shade700, fontWeight: FontWeight.w600)),
+            ]),
           ),
         ],
+      ]),
+      const SizedBox(height: 6),
+      Container(
+        decoration: BoxDecoration(color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: borderColor, width: _referralError != null || _referralValid ? 1.5 : 1)),
+        child: Row(children: [
+          const Padding(
+            padding: EdgeInsets.only(left: 14),
+            child: Icon(Icons.card_giftcard_rounded, color: Color(0xFF94A3B8), size: 18),
+          ),
+          Expanded(child: TextField(
+            controller: _referralCtrl, enabled: !_loading,
+            textCapitalization: TextCapitalization.characters,
+            onChanged: (v) => setState(() { _referralError = null; _referralValid = false; }),
+            onSubmitted: _validateReferral,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600,
+              color: Color(0xFF1E293B), letterSpacing: 1),
+            decoration: const InputDecoration(
+              hintText: 'e.g. SUMMER2026',
+              hintStyle: TextStyle(fontSize: 13, color: Color(0xFFCBD5E1),
+                fontWeight: FontWeight.normal, letterSpacing: 0),
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 14)),
+          )),
+          if (_referralCtrl.text.isNotEmpty)
+            TextButton(
+              onPressed: () => _validateReferral(_referralCtrl.text),
+              style: TextButton.styleFrom(foregroundColor: _primary),
+              child: const Text('Apply', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+            ),
+        ]),
+      ),
+      if (_referralError != null) ...[
+        const SizedBox(height: 4),
+        Row(children: [
+          Icon(Icons.error_outline_rounded, color: Colors.red.shade400, size: 13),
+          const SizedBox(width: 4),
+          Text(_referralError!, style: TextStyle(fontSize: 11, color: Colors.red.shade600)),
+        ]),
       ],
-    );
+    ]);
   }
 }

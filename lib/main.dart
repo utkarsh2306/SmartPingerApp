@@ -1,58 +1,39 @@
 import 'package:flutter/material.dart';
-import 'package:message_me/screens/PermissionSetupScreen.dart';
+import 'package:flutter/services.dart';
 import 'package:message_me/screens/onboarding_screen.dart';
+import 'package:message_me/screens/PermissionSetupScreen.dart';
 import 'package:message_me/screens/splash_screen.dart';
-import 'package:message_me/service/background_service.dart';
-import 'package:message_me/service/database_service.dart';
-import 'package:message_me/service/notification_service.dart';
-import 'package:message_me/service/permission_service.dart';
-
+import 'package:message_me/service/crash_reporter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  try {
-    await PermissionService.request();
-  } catch (_) {}
+  // ✅ 1. Initialize crash reporter FIRST — catches all errors from here on
+  CrashReporter.initialize();
 
-  try {
-    await BackgroundServiceManager.initialize();
-    await BackgroundServiceManager.start();
-  } catch (_) {}
+  // ✅ 2. Lock orientation to portrait
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
 
+  // ✅ 3. Set system UI style
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+  ));
+
+  // ✅ 4. Read prefs ONLY — no heavy init before UI shows
   final prefs = await SharedPreferences.getInstance();
-
-  // ✅ Auto-enable if rules exist and user never explicitly disabled
-  try {
-    final db = await DatabaseService.db;
-    final rules = await db.query('auto_sms_rules', where: 'is_active = 1');
-    final explicitlyDisabled = prefs.getBool('user_disabled_trigger') ?? false;
-    if (rules.isNotEmpty && !explicitlyDisabled) {
-      await prefs.setBool('auto_trigger_enabled', true);
-      debugPrint('✅ Auto-trigger enabled — ${rules.length} active rules found');
-    }
-  } catch (_) {}
-
-  final wasEnabled = prefs.getBool('auto_trigger_enabled') ?? false;
-
-  try {
-    await BackgroundServiceManager.syncRulesToNative(enabled: wasEnabled);
-  } catch (_) {}
-
-  try {
-    await NotificationService().initTable();
-  } catch (_) {}
-
   final onboardingDone = prefs.getBool('onboarding_done') ?? false;
   final permissionsDone = prefs.getBool('permissions_setup_done') ?? false;
 
-  runApp(
-    MyApp(
-      showOnboarding: !onboardingDone,
-      showPermissions: onboardingDone && !permissionsDone,
-    ),
-  );
+  // ✅ 5. Show UI immediately — all heavy init happens inside SplashScreen
+  runApp(MyApp(
+    showOnboarding: !onboardingDone,
+    showPermissions: onboardingDone && !permissionsDone,
+  ));
 }
 
 class MyApp extends StatelessWidget {
@@ -69,16 +50,28 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'SMS Marketing',
+      title: 'Smart Pinger',
       theme: ThemeData(
-        primarySwatch: Colors.blue,
-        scaffoldBackgroundColor: Colors.grey.shade100,
+        primaryColor: const Color(0xFF5B67F1),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF5B67F1),
+          primary: const Color(0xFF5B67F1),
+        ),
+        scaffoldBackgroundColor: const Color(0xFFF5F7FB),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFF5B67F1),
+          foregroundColor: Colors.white,
+          elevation: 0,
+          centerTitle: false,
+        ),
+        fontFamily: 'Roboto',
+        useMaterial3: false,
       ),
       home: showOnboarding
           ? const OnboardingScreen()
           : showPermissions
-          ? const PermissionSetupScreen()
-          : const SplashScreen(),
+              ? const PermissionSetupScreen()
+              : const SplashScreen(),
     );
   }
 }

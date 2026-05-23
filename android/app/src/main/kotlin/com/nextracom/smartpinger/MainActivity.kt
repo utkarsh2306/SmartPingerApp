@@ -1,4 +1,4 @@
-package com.example.message_me
+package com.nextracom.smartpinger
 
 import android.app.AlarmManager
 import android.app.NotificationChannel
@@ -18,7 +18,7 @@ import android.content.Context
 
 class MainActivity : FlutterActivity() {
 
-    private val CHANNEL = "com.example.message_me/settings"
+    private val CHANNEL = "com.nextracom.smartpinger/settings"
     private val TAG = "SmartPinger"
     private val FLUTTER_PREFS = "FlutterSharedPreferences"
     private val NATIVE_PREFS = "SmartPingerPrefs"
@@ -134,6 +134,31 @@ class MainActivity : FlutterActivity() {
                             result.success(null)
                         } catch (e: Exception) {
                             result.error("ERROR", e.message, null)
+                        }
+                    }
+
+                    // ✅ Send SMS via native SmsManager — replaces another_telephony
+                    "sendSms" -> {
+                        try {
+                            val phone   = call.argument<String>("phone")
+                            val message = call.argument<String>("message")
+                            if (phone == null || message == null) {
+                                result.error("INVALID_ARGS", "phone and message required", null)
+                                return@setMethodCallHandler
+                            }
+                            val smsManager = if (android.os.Build.VERSION.SDK_INT >= 31) {
+                                getSystemService(android.telephony.SmsManager::class.java)
+                            } else {
+                                @Suppress("DEPRECATION")
+                                android.telephony.SmsManager.getDefault()
+                            }
+                            val parts = smsManager.divideMessage(message)
+                            smsManager.sendMultipartTextMessage(phone, null, parts, null, null)
+                            Log.d(TAG, "📤 SMS sent to $phone from Flutter channel")
+                            result.success(null)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "❌ sendSms failed: ${e.message}")
+                            result.error("SMS_FAILED", e.message, null)
                         }
                     }
 

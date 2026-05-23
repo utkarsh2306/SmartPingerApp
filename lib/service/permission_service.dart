@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 class PermissionService {
-  static const _platform = MethodChannel('com.example.message_me/settings');
+  static const _platform = MethodChannel('com.nextracom.smartpinger/settings');
 
   // ✅ Request all basic permissions on app start
   static Future<void> request() async {
@@ -72,7 +72,7 @@ class PermissionService {
   static Future<void> requestExactAlarmPermission() async {
     try {
       if (Platform.isAndroid) {
-        const platform = MethodChannel('com.example.message_me/settings');
+        const platform = MethodChannel('com.nextracom.smartpinger/settings');
         final granted = await platform.invokeMethod(
           'checkExactAlarmPermission',
         );

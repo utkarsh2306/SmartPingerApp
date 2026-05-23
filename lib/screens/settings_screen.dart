@@ -548,7 +548,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       Navigator.pop(context);
                       try {
                         const platform = MethodChannel(
-                          'com.example.message_me/settings',
+                          'com.nextracom.smartpinger/settings',
                         );
                         await platform.invokeMethod('openSimSettings');
                       } catch (e) {

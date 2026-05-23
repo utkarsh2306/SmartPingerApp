@@ -4,10 +4,14 @@ import 'package:path/path.dart';
 
 class DatabaseService {
   static Database? _db;
-  static const int _version = 8; // ✅ bumped to 8
+  static const int _version = 8;
 
+  // ✅ Isolate-safe: returns cached instance in main isolate,
+  // opens fresh connection in background isolates
   static Future<Database> get db async {
-    if (_db != null) return _db!;
+    // In background isolate _db is always null (different memory space)
+    // so this always opens fresh — which is correct for isolate safety
+    if (_db != null && _db!.isOpen) return _db!;
     _db = await _initDb();
     return _db!;
   }

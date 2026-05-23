@@ -28,6 +28,7 @@ dependencies:
   path: ^1.9.1
   http: ^1.6.0
   device_info_plus: ^12.4.0
+  package_info_plus: ^9.0.1
 
 
 dev_dependencies:

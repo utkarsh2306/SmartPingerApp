@@ -1,4 +1,4 @@
-package com.example.message_me
+package com.nextracom.smartpinger
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -7,7 +7,7 @@ import android.util.Log
 
 class SmsLogReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != "com.example.message_me.SMS_SENT_BY_NATIVE") return
+        if (intent.action != "com.nextracom.smartpinger.SMS_SENT_BY_NATIVE") return
 
         val phone = intent.getStringExtra("phone") ?: return
         val callType = intent.getStringExtra("call_type") ?: return

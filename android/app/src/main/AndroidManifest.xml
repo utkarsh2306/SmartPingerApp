@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
-    package="com.example.message_me">
+    package="com.nextracom.smartpinger">
 
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.READ_CALL_LOG"/>
@@ -53,7 +53,7 @@
     android:enabled="true"
     android:exported="false">
     <intent-filter>
-        <action android:name="com.example.message_me.WATCHDOG"/>
+        <action android:name="com.nextracom.smartpinger.WATCHDOG"/>
     </intent-filter>
 </receiver>
         <!-- ✅ SMS log receiver — handles native SMS broadcast -->
@@ -62,7 +62,7 @@
             android:enabled="true"
             android:exported="false">
             <intent-filter>
-                <action android:name="com.example.message_me.SMS_SENT_BY_NATIVE"/>
+                <action android:name="com.nextracom.smartpinger.SMS_SENT_BY_NATIVE"/>
             </intent-filter>
         </receiver>
 
