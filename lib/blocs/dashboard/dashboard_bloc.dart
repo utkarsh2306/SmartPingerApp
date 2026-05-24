@@ -233,9 +233,14 @@ class DashboardBloc {
 
   // ── Auto trigger ──────────────────────────────────────────────
   void _refreshAutoTriggerStatus() async {
-    final isRunning = await BackgroundServiceManager.isRunning();
-    state.value = state.value.copyWith(autoTriggerActive: isRunning);
-    NotificationService().showPersistentAutoTriggerNotification(isRunning);
+    final prefs = await SharedPreferences.getInstance();
+    // ✅ Use pref as source of truth, not just service running state
+    // Service may be running but trigger could be disabled by user
+    final enabledInPrefs = prefs.getBool('auto_trigger_enabled') ?? false;
+    final serviceRunning = await BackgroundServiceManager.isRunning();
+    final isActive = enabledInPrefs && serviceRunning;
+    state.value = state.value.copyWith(autoTriggerActive: isActive);
+    NotificationService().showPersistentAutoTriggerNotification(isActive);
   }
 
   Future<void> _onToggle() async {
@@ -248,12 +253,14 @@ class DashboardBloc {
       await prefs.setBool('user_disabled_trigger', true);
       await BackgroundServiceManager.syncRulesToNative(enabled: false);
       try { await _platform.invokeMethod('stopCallDetection'); } catch (_) {}
+      try { await _platform.invokeMethod('syncAutoTrigger', {'enabled': false}); } catch (_) {}
     } else {
       await BackgroundServiceManager.start();
       await prefs.setBool('auto_trigger_enabled', true);
       await prefs.setBool('user_disabled_trigger', false);
       await BackgroundServiceManager.syncRulesToNative(enabled: true);
       try { await _platform.invokeMethod('startCallDetection'); } catch (_) {}
+      try { await _platform.invokeMethod('syncAutoTrigger', {'enabled': true}); } catch (_) {}
       await _syncRules();
     }
 

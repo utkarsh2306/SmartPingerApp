@@ -120,6 +120,59 @@ class CallDetectionService : Service() {
         }
     }
 
+
+    // ── Process SMS queue from Flutter background isolate ─────────────
+    // Flutter background isolate cannot use MethodChannel
+    // So it writes each SMS as a separate key — native reads and sends
+
+    private fun processPendingSmsQueue() {
+        try {
+            val flutterPrefs = getSharedPreferences(
+                "FlutterSharedPreferences", Context.MODE_PRIVATE)
+
+            // Check if there's anything pending
+            val hasPending = flutterPrefs.getBoolean("flutter.sms_queue_pending", false)
+            if (!hasPending) return
+
+            // Find all sms_queue_ keys
+            val allKeys = flutterPrefs.all.keys
+                .filter { it.startsWith("flutter.sms_queue_") }
+
+            if (allKeys.isEmpty()) {
+                flutterPrefs.edit().remove("flutter.sms_queue_pending").apply()
+                return
+            }
+
+            val editor = flutterPrefs.edit()
+            for (key in allKeys) {
+                val entry = flutterPrefs.getString(key, null) ?: continue
+                val parts = entry.split("|||")
+                if (parts.size < 2) { editor.remove(key); continue }
+                val phone   = parts[0]
+                val message = parts[1]
+                try {
+                    val smsManager = if (android.os.Build.VERSION.SDK_INT >= 31) {
+                        getSystemService(android.telephony.SmsManager::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        android.telephony.SmsManager.getDefault()
+                    }
+                    val msgParts = smsManager.divideMessage(message)
+                    smsManager.sendMultipartTextMessage(phone, null, msgParts, null, null)
+                    Log.d(TAG, "📤 Queued SMS sent to $phone")
+                    editor.remove(key) // remove after successful send
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Queued SMS failed to $phone: ${e.message}")
+                    // Leave key in prefs for retry
+                }
+            }
+            editor.remove("flutter.sms_queue_pending")
+            editor.apply()
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ processPendingSmsQueue error: ${e.message}")
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         stopListening()
@@ -134,6 +187,9 @@ class CallDetectionService : Service() {
         if (wakeLock?.isHeld == false) {
             acquireWakeLock()
         }
+
+        // ✅ Process any SMS queued by Flutter background isolate
+        processPendingSmsQueue()
 
         if (telephonyManager == null && hasPhonePermission(this)) {
             telephonyManager =

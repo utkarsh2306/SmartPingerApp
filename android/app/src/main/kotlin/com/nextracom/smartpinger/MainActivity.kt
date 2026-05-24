@@ -172,6 +172,23 @@ class MainActivity : FlutterActivity() {
                         }
                     }
 
+                    // ✅ Write enabled flag to native SmartPingerPrefs
+                    // So Kotlin can read it without FlutterSharedPreferences timing issues
+                    "syncAutoTrigger" -> {
+                        try {
+                            val enabled = call.argument<Boolean>("enabled") ?: false
+                            val nativePrefs = getSharedPreferences(
+                                CallDetectionService.NATIVE_PREFS, Context.MODE_PRIVATE)
+                            nativePrefs.edit()
+                                .putBoolean("auto_trigger_enabled", enabled)
+                                .apply()
+                            Log.d(TAG, "✅ syncAutoTrigger: enabled=$enabled")
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("ERROR", e.message, null)
+                        }
+                    }
+
                     "clearDedupKeys" -> {
                         try {
                             val nativePrefs = getSharedPreferences(

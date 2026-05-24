@@ -92,13 +92,13 @@ class _SplashScreenState extends State<SplashScreen>
       context: 'BackgroundServiceManager.start',
     );
 
-    // Auto-enable if rules exist
+    // Auto-enable trigger on fresh install or if not explicitly disabled
     await CrashReporter.wrap(() async {
       final prefs = await SharedPreferences.getInstance();
-      final db = await DatabaseService.db;
-      final rules = await db.query('auto_sms_rules', where: 'is_active = 1');
       final explicitlyDisabled = prefs.getBool('user_disabled_trigger') ?? false;
-      if (rules.isNotEmpty && !explicitlyDisabled) {
+      // ✅ Enable by default unless user explicitly turned it off
+      // Don't require rules to exist — user may not have set them up yet
+      if (!explicitlyDisabled) {
         await prefs.setBool('auto_trigger_enabled', true);
       }
       final wasEnabled = prefs.getBool('auto_trigger_enabled') ?? false;
