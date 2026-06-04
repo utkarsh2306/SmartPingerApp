@@ -4,15 +4,20 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:message_me/core/api_config.dart';
+import 'package:message_me/service/admin_notification_service.dart';
 import 'package:message_me/service/database_service.dart';
 import 'package:message_me/service/background_service.dart';
 import 'package:message_me/service/notification_service.dart';
 
 // ── Events ────────────────────────────────────────────────────────
 abstract class DashboardEvent {}
+
 class DashboardLoadEvent extends DashboardEvent {}
+
 class DashboardRefreshAnalyticsEvent extends DashboardEvent {}
+
 class DashboardToggleAutoTriggerEvent extends DashboardEvent {}
+
 class DashboardTabChangedEvent extends DashboardEvent {
   final int index;
   DashboardTabChangedEvent(this.index);
@@ -61,15 +66,15 @@ class DashboardState {
     bool? requiresUpgrade,
   }) {
     return DashboardState(
-      status:            status            ?? this.status,
-      tabIndex:          tabIndex          ?? this.tabIndex,
+      status: status ?? this.status,
+      tabIndex: tabIndex ?? this.tabIndex,
       autoTriggerActive: autoTriggerActive ?? this.autoTriggerActive,
-      user:              user              ?? this.user,
-      subscription:      subscription      ?? this.subscription,
-      analytics:         analytics         ?? this.analytics,
-      errorMessage:      errorMessage      ?? this.errorMessage,
-      requiresLogin:     requiresLogin     ?? this.requiresLogin,
-      requiresUpgrade:   requiresUpgrade   ?? this.requiresUpgrade,
+      user: user ?? this.user,
+      subscription: subscription ?? this.subscription,
+      analytics: analytics ?? this.analytics,
+      errorMessage: errorMessage ?? this.errorMessage,
+      requiresLogin: requiresLogin ?? this.requiresLogin,
+      requiresUpgrade: requiresUpgrade ?? this.requiresUpgrade,
     );
   }
 }
@@ -81,7 +86,8 @@ class DashboardBloc {
   DashboardBloc._internal();
 
   final ValueNotifier<DashboardState> state = ValueNotifier(
-    const DashboardState());
+    const DashboardState(),
+  );
 
   bool _dataLoaded = false;
 
@@ -89,15 +95,19 @@ class DashboardBloc {
   static const _platform = MethodChannel('com.nextracom.smartpinger/settings');
 
   void add(DashboardEvent event) {
-    if (event is DashboardLoadEvent)            _onLoad();
+    if (event is DashboardLoadEvent) _onLoad();
     if (event is DashboardRefreshAnalyticsEvent) _onRefreshAnalytics();
     if (event is DashboardToggleAutoTriggerEvent) _onToggle();
-    if (event is DashboardTabChangedEvent)       _onTabChanged(event.index);
+    if (event is DashboardTabChangedEvent) _onTabChanged(event.index);
   }
 
   // ── Load ──────────────────────────────────────────────────────
   Future<void> _onLoad() async {
     if (_dataLoaded) {
+      // ✅ Clear any stale requiresLogin flag before refreshing
+      if (state.value.requiresLogin) {
+        state.value = state.value.copyWith(requiresLogin: false);
+      }
       _refreshAutoTriggerStatus();
       return;
     }
@@ -121,6 +131,9 @@ class DashboardBloc {
     await _loadAnalytics();
     _refreshAutoTriggerStatus();
 
+    // ✅ Fetch admin notifications in background (non-blocking)
+    AdminNotificationService().fetchAndStore();
+
     state.value = state.value.copyWith(status: DashboardStatus.loaded);
     _dataLoaded = true;
   }
@@ -131,13 +144,15 @@ class DashboardBloc {
   // Only show upgrade prompt as a banner — don't lock them out
   Future<void> _loadSubscription(String token) async {
     try {
-      final res = await http.get(
-        Uri.parse(ApiConfig.mySubscription),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-      ).timeout(ApiConfig.receiveTimeout);
+      final res = await http
+          .get(
+            Uri.parse(ApiConfig.mySubscription),
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+            },
+          )
+          .timeout(ApiConfig.receiveTimeout);
 
       if (res.statusCode == 200) {
         final data = json.decode(res.body);
@@ -152,8 +167,12 @@ class DashboardBloc {
           }
         }
       } else if (res.statusCode == 401) {
-        // Real auth failure — logout
-        state.value = state.value.copyWith(requiresLogin: true);
+        // ✅ Token may be valid but subscription middleware blocks it
+        // Don't redirect — token validity already checked before calling this
+        // Only clear subscription data
+        state.value = state.value.copyWith(
+          subscription: {'plan': 'unknown', 'is_active': false},
+        );
       } else if (res.statusCode == 403) {
         final data = json.decode(res.body);
         // ✅ Only treat as expired if API sends the exact code
@@ -185,13 +204,15 @@ class DashboardBloc {
   // ── User profile ──────────────────────────────────────────────
   Future<void> _loadUserProfile(String token) async {
     try {
-      final res = await http.get(
-        Uri.parse(ApiConfig.me),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-      ).timeout(ApiConfig.receiveTimeout);
+      final res = await http
+          .get(
+            Uri.parse(ApiConfig.me),
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+            },
+          )
+          .timeout(ApiConfig.receiveTimeout);
 
       if (res.statusCode == 200) {
         final data = json.decode(res.body);
@@ -200,12 +221,12 @@ class DashboardBloc {
           state.value = state.value.copyWith(user: user);
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('user_email', user['email'] ?? '');
-          await prefs.setString('user_name',  user['full_name'] ?? '');
+          await prefs.setString('user_name', user['full_name'] ?? '');
           await prefs.setString('user_phone', user['phone'] ?? '');
         }
-      } else if (res.statusCode == 401) {
-        state.value = state.value.copyWith(requiresLogin: true);
       }
+      // ✅ Don't redirect to login from profile endpoint errors
+      // Only redirect if token is missing (handled before calling this)
     } catch (_) {}
   }
 
@@ -213,17 +234,22 @@ class DashboardBloc {
   Future<void> _loadAnalytics() async {
     try {
       final db = await DatabaseService.db;
-      final totalLeads     = (await db.query('leads')).length;
-      final totalSmsSent   = (await db.query('auto_sms_logs')).length;
-      final activeRules    = (await db.query('auto_sms_rules', where: 'is_active = 1')).length;
+      final totalLeads = (await db.query('leads')).length;
+      final totalSmsSent = (await db.query('auto_sms_logs')).length;
+      final activeRules = (await db.query(
+        'auto_sms_rules',
+        where: 'is_active = 1',
+      )).length;
       final totalTemplates = (await db.query('templates')).length;
 
-      state.value = state.value.copyWith(analytics: {
-        'totalLeads':    totalLeads,
-        'totalSmsSent':  totalSmsSent,
-        'activeRules':   activeRules,
-        'templates':     totalTemplates,
-      });
+      state.value = state.value.copyWith(
+        analytics: {
+          'totalLeads': totalLeads,
+          'totalSmsSent': totalSmsSent,
+          'activeRules': activeRules,
+          'templates': totalTemplates,
+        },
+      );
     } catch (_) {}
   }
 
@@ -252,15 +278,23 @@ class DashboardBloc {
       await prefs.setBool('auto_trigger_enabled', false);
       await prefs.setBool('user_disabled_trigger', true);
       await BackgroundServiceManager.syncRulesToNative(enabled: false);
-      try { await _platform.invokeMethod('stopCallDetection'); } catch (_) {}
-      try { await _platform.invokeMethod('syncAutoTrigger', {'enabled': false}); } catch (_) {}
+      try {
+        await _platform.invokeMethod('stopCallDetection');
+      } catch (_) {}
+      try {
+        await _platform.invokeMethod('syncAutoTrigger', {'enabled': false});
+      } catch (_) {}
     } else {
       await BackgroundServiceManager.start();
       await prefs.setBool('auto_trigger_enabled', true);
       await prefs.setBool('user_disabled_trigger', false);
       await BackgroundServiceManager.syncRulesToNative(enabled: true);
-      try { await _platform.invokeMethod('startCallDetection'); } catch (_) {}
-      try { await _platform.invokeMethod('syncAutoTrigger', {'enabled': true}); } catch (_) {}
+      try {
+        await _platform.invokeMethod('startCallDetection');
+      } catch (_) {}
+      try {
+        await _platform.invokeMethod('syncAutoTrigger', {'enabled': true});
+      } catch (_) {}
       await _syncRules();
     }
 
@@ -274,9 +308,12 @@ class DashboardBloc {
       String? missedMsg, incomingMsg, outgoingMsg;
 
       for (final callType in ['missed', 'incoming', 'outgoing']) {
-        final rules = await db.query('auto_sms_rules',
+        final rules = await db.query(
+          'auto_sms_rules',
           where: 'trigger_type = ? AND is_active = 1',
-          whereArgs: [callType], limit: 1);
+          whereArgs: [callType],
+          limit: 1,
+        );
         if (rules.isEmpty) continue;
 
         final rule = rules.first;
@@ -288,8 +325,11 @@ class DashboardBloc {
         } else {
           final templateId = rule['template_id'] as int?;
           if (templateId != null) {
-            final templates = await db.query('templates',
-              where: 'id = ?', whereArgs: [templateId]);
+            final templates = await db.query(
+              'templates',
+              where: 'id = ?',
+              whereArgs: [templateId],
+            );
             if (templates.isNotEmpty) {
               message = templates.first['message'] as String? ?? '';
             }
@@ -297,15 +337,15 @@ class DashboardBloc {
         }
 
         if (message.isNotEmpty) {
-          if (callType == 'missed')    missedMsg    = message;
-          if (callType == 'incoming')  incomingMsg  = message;
-          if (callType == 'outgoing')  outgoingMsg  = message;
+          if (callType == 'missed') missedMsg = message;
+          if (callType == 'incoming') incomingMsg = message;
+          if (callType == 'outgoing') outgoingMsg = message;
         }
       }
 
       await _platform.invokeMethod('syncRules', {
-        'enabled':  true,
-        'missed':   missedMsg,
+        'enabled': true,
+        'missed': missedMsg,
         'incoming': incomingMsg,
         'outgoing': outgoingMsg,
       });
@@ -326,6 +366,9 @@ class DashboardBloc {
 
   void reset() {
     _dataLoaded = false;
-    state.value = const DashboardState();
+    state.value = const DashboardState(
+      requiresLogin: false,
+      requiresUpgrade: false,
+    );
   }
 }

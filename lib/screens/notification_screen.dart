@@ -141,18 +141,11 @@ class _NotificationScreenState extends State<NotificationScreen> {
   Widget _buildFilterChips() {
     final filters = [
       {'value': 'all', 'label': 'All', 'icon': Icons.notifications_rounded},
-      {
-        'value': 'unread',
-        'label': 'Unread',
-        'icon': Icons.mark_email_unread_rounded,
-      },
+      {'value': 'unread', 'label': 'Unread', 'icon': Icons.mark_email_unread_rounded},
+      {'value': 'admin', 'label': 'Admin', 'icon': Icons.campaign_rounded},
       {'value': 'sms_sent', 'label': 'SMS', 'icon': Icons.message_rounded},
       {'value': 'call_detected', 'label': 'Calls', 'icon': Icons.call_rounded},
-      {
-        'value': 'rule_triggered',
-        'label': 'Rules',
-        'icon': Icons.auto_awesome_rounded,
-      },
+      {'value': 'rule_triggered', 'label': 'Rules', 'icon': Icons.auto_awesome_rounded},
       {'value': 'system', 'label': 'System', 'icon': Icons.settings_rounded},
     ];
 
@@ -588,6 +581,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
         return Icons.call_rounded;
       case 'rule_triggered':
         return Icons.auto_awesome_rounded;
+      case 'admin':
+        return Icons.campaign_rounded;
       case 'system':
         return Icons.settings_rounded;
       default:
@@ -603,6 +598,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
         return const Color(0xFF3B82F6);
       case 'rule_triggered':
         return const Color(0xFFF59E0B);
+      case 'admin':
+        return const Color(0xFF5B67F1);
       case 'system':
         return const Color(0xFF8B5CF6);
       default:

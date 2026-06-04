@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:message_me/service/admin_notification_service.dart';
 import 'package:message_me/service/background_service.dart';
 import 'package:message_me/service/database_service.dart';
 import 'package:message_me/service/notification_service.dart';
@@ -109,6 +110,12 @@ class _SplashScreenState extends State<SplashScreen>
     await CrashReporter.wrap(
       () => NotificationService().initTable(),
       context: 'NotificationService.initTable',
+    );
+
+    // ✅ Fetch admin-sent notifications from server
+    await CrashReporter.wrap(
+      () => AdminNotificationService().fetchAndStore(),
+      context: 'AdminNotificationService.fetchAndStore',
     );
 
     _setStatus('Ready!');
