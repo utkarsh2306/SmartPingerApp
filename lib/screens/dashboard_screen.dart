@@ -58,96 +58,83 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _showSubscriptionExpiredDialog() {
+    final sub = _bloc.state.value.subscription;
+    final isInactive = sub['is_active'] == false || sub['is_active'] == 0;
+    final title = isInactive ? 'Account deactivated' : 'Subscription expired';
+    final message = isInactive
+        ? 'Your account has been deactivated. Auto SMS has been stopped. Contact us to reactivate.'
+        : 'Your subscription has expired. Auto SMS has been stopped. Contact us to renew.';
+
     showDialog(
       context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Row(
-          children: [
-            Icon(Icons.warning_amber_rounded, color: Colors.red, size: 28),
-            SizedBox(width: 10),
-            Text('Subscription expired'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Your subscription has expired. Auto SMS has been stopped.',
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFEEEDFE),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.phone_rounded,
-                    color: Color(0xFF5B67F1),
-                    size: 20,
-                  ),
+      barrierDismissible: false, // ✅ Cannot be dismissed by tapping outside
+      builder: (ctx) => WillPopScope(
+        onWillPop: () async => false, // ✅ Cannot be dismissed by back button
+        child: AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Row(children: [
+            Icon(isInactive ? Icons.block_rounded : Icons.warning_amber_rounded,
+              color: Colors.red, size: 28),
+            const SizedBox(width: 10),
+            Expanded(child: Text(title,
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold))),
+          ]),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(message),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEEEDFE),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.phone_rounded, color: Color(0xFF5B67F1), size: 20),
                   const SizedBox(width: 10),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Contact to renew',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Color(0xFF64748B),
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      GestureDetector(
-                        onTap: () async {
-                          final uri = Uri.parse('tel:9536235656');
-                          if (await canLaunchUrl(uri)) await launchUrl(uri);
-                        },
-                        child: const Text(
-                          '9536235656',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF5B67F1),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+                  Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('Contact to renew',
+                      style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                    const SizedBox(height: 2),
+                    GestureDetector(
+                      onTap: () async {
+                        final uri = Uri.parse('tel:9536235656');
+                        if (await canLaunchUrl(uri)) await launchUrl(uri);
+                      },
+                      child: const Text('9536235656',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold,
+                          color: Color(0xFF5B67F1))),
+                    ),
+                  ]),
+                ]),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _redirectToLogin();
+              },
+              child: const Text('Logout'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () async {
+                final uri = Uri.parse('tel:9536235656');
+                if (await canLaunchUrl(uri)) await launchUrl(uri);
+              },
+              icon: const Icon(Icons.phone_rounded, size: 16),
+              label: const Text('Call now'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF5B67F1),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _redirectToLogin();
-            },
-            child: const Text('Logout'),
-          ),
-          ElevatedButton.icon(
-            onPressed: () async {
-              final uri = Uri.parse('tel:9536235656');
-              if (await canLaunchUrl(uri)) await launchUrl(uri);
-            },
-            icon: const Icon(Icons.phone_rounded, size: 16),
-            label: const Text('Call now'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF5B67F1),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

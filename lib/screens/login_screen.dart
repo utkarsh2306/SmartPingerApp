@@ -201,7 +201,6 @@ class _LoginScreenState extends State<LoginScreen>
     await prefs.setString('user_id', data['user']?['id'] ?? '');
     await prefs.setString('user_email', data['user']?['email'] ?? '');
     await prefs.setString('user_name', data['user']?['full_name'] ?? '');
-    await prefs.remove('is_guest');
   }
 
   void _goToDashboard() {

@@ -1,20 +1,23 @@
 import 'package:flutter/material.dart';
-import 'package:another_telephony/telephony.dart';
+import 'package:flutter/services.dart';
 import 'package:message_me/service/notification_service.dart';
 import 'whatsapp_service.dart';
 
 class SmsService {
-  static final Telephony _telephony = Telephony.instance;
+  // ✅ SMS sent via native Kotlin SmsManager — no another_telephony
+  static const _channel = MethodChannel('com.nextracom.smartpinger/settings');
 
   static Future<void> send(String phone, String message) async {
     try {
-      await _telephony.sendSms(to: phone, message: message);
+      await _channel.invokeMethod('sendSms', {
+        'phone': phone,
+        'message': message,
+      });
     } catch (e) {
-      print("SMS failed: $e");
+      debugPrint('SMS failed: $e');
     }
   }
 
-  // New method: Send with app selection
   static Future<void> sendWithAppSelection({
     required BuildContext context,
     required String phone,
@@ -25,11 +28,9 @@ class SmsService {
       phoneNumber: phone,
       message: message,
     );
-    // After sending SMS, add:
     await NotificationService().notifySmsSent(phone, 'Manual SMS');
   }
 
-  // Send via WhatsApp only
   static Future<void> sendViaWhatsApp(String phone, String message) async {
     await WhatsAppService.sendWhatsApp(phone, message);
   }

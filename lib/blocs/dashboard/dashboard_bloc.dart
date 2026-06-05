@@ -139,20 +139,15 @@ class DashboardBloc {
   }
 
   // ── Subscription ──────────────────────────────────────────────
-  // ✅ Fixed: subscription expiry is shown as info, NOT a blocker
-  // Users should see the dashboard even if subscription expired
-  // Only show upgrade prompt as a banner — don't lock them out
   Future<void> _loadSubscription(String token) async {
     try {
-      final res = await http
-          .get(
-            Uri.parse(ApiConfig.mySubscription),
-            headers: {
-              'Authorization': 'Bearer $token',
-              'Content-Type': 'application/json',
-            },
-          )
-          .timeout(ApiConfig.receiveTimeout);
+      final res = await http.get(
+        Uri.parse(ApiConfig.mySubscription),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      ).timeout(ApiConfig.receiveTimeout);
 
       if (res.statusCode == 200) {
         final data = json.decode(res.body);
@@ -160,29 +155,36 @@ class DashboardBloc {
           final sub = data['data'] as Map<String, dynamic>;
           state.value = state.value.copyWith(subscription: sub);
 
-          // ✅ Save expiry to prefs so Kotlin can check before sending SMS in background
           final prefs = await SharedPreferences.getInstance();
           final expiry = sub['expiry_date'] ?? sub['subscription_expiry'];
           if (expiry != null) {
             await prefs.setString('subscription_expiry', expiry.toString());
           }
 
-          if (sub['requires_upgrade'] == true) {
+          // ✅ Check inactive user
+          final isActive = sub['is_active'];
+          final isInactive = isActive == false || isActive == 0;
+
+          // ✅ Check expiry locally
+          bool isExpired = false;
+          if (expiry != null) {
+            try {
+              final expiryDate = DateTime.parse(expiry.toString());
+              isExpired = expiryDate.isBefore(DateTime.now());
+            } catch (_) {}
+          }
+
+          // ✅ Block SMS and show dialog for expired or inactive
+          if (sub['requires_upgrade'] == true || isExpired || isInactive) {
+            await prefs.setBool('auto_trigger_enabled', false);
             state.value = state.value.copyWith(requiresUpgrade: true);
           }
         }
-      } else if (res.statusCode == 401) {
-        // ✅ Token may be valid but subscription middleware blocks it
-        // Don't redirect — token validity already checked before calling this
-        // Only clear subscription data
-        state.value = state.value.copyWith(
-          subscription: {'plan': 'unknown', 'is_active': false},
-        );
       } else if (res.statusCode == 403) {
         final data = json.decode(res.body);
-        // ✅ Only treat as expired if API sends the exact code
-        // NOT just any 403
         if (data['code'] == 'SUBSCRIPTION_EXPIRED') {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setBool('auto_trigger_enabled', false);
           state.value = state.value.copyWith(
             subscription: {
               'plan': 'expired',
@@ -190,18 +192,12 @@ class DashboardBloc {
               'sms_limit': 0,
               'sms_used': 0,
               'sms_remaining': 0,
-              'requires_upgrade': true,
             },
-            // ✅ Show the expired dialog with contact number
             requiresUpgrade: true,
           );
         }
-        // Any other 403 — ignore, don't redirect
       }
-      // Any other status (500, network error) — ignore, show dashboard anyway
-    } catch (_) {
-      // Network error loading subscription — don't block dashboard
-    }
+    } catch (_) {}
   }
 
   // ── User profile ──────────────────────────────────────────────
