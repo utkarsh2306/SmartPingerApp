@@ -126,6 +126,18 @@ class CallDetectionService : Service() {
     // So it writes each SMS as a separate key — native reads and sends
 
     // ── Subscription expiry check ─────────────────────────────────────
+    private fun isUserActive(): Boolean {
+        return try {
+            val flutterPrefs = getSharedPreferences(
+                "FlutterSharedPreferences", Context.MODE_PRIVATE)
+            // Default true — if not set, allow SMS (fail open)
+            flutterPrefs.getBoolean("flutter.user_is_active", true)
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ isUserActive error: ${e.message}")
+            true // fail open
+        }
+    }
+
     private fun isSubscriptionExpired(): Boolean {
         return try {
             val flutterPrefs = getSharedPreferences(
@@ -172,13 +184,30 @@ class CallDetectionService : Service() {
                 return
             }
 
+            // ✅ Clear ALL queue keys immediately before processing
+            // Prevents re-sending if service restarts mid-processing
             val editor = flutterPrefs.edit()
+            editor.remove("flutter.sms_queue_pending")
+            for (key in allKeys) editor.remove(key)
+            editor.apply()
+
+            // Now process — items are already removed so no duplicate sends
+            val nativePrefs = getSharedPreferences(NATIVE_PREFS, Context.MODE_PRIVATE)
             for (key in allKeys) {
                 val entry = flutterPrefs.getString(key, null) ?: continue
                 val parts = entry.split("|||")
-                if (parts.size < 2) { editor.remove(key); continue }
+                if (parts.size < 2) continue
                 val phone   = parts[0]
                 val message = parts[1]
+                val callType = if (parts.size > 2) parts[2] else "unknown"
+
+                // ✅ Dedup check — same as triggerSms
+                val sentKey = "sent_${phone}_${callType}_${getTodayKey()}"
+                if (nativePrefs.getBoolean(sentKey, false)) {
+                    Log.d(TAG, "⏭️ Queue: already sent to $phone for $callType today")
+                    continue
+                }
+
                 try {
                     val smsManager = if (android.os.Build.VERSION.SDK_INT >= 31) {
                         getSystemService(android.telephony.SmsManager::class.java)
@@ -189,14 +218,11 @@ class CallDetectionService : Service() {
                     val msgParts = smsManager.divideMessage(message)
                     smsManager.sendMultipartTextMessage(phone, null, msgParts, null, null)
                     Log.d(TAG, "📤 Queued SMS sent to $phone")
-                    editor.remove(key) // remove after successful send
+                    nativePrefs.edit().putBoolean(sentKey, true).apply()
                 } catch (e: Exception) {
                     Log.e(TAG, "❌ Queued SMS failed to $phone: ${e.message}")
-                    // Leave key in prefs for retry
                 }
             }
-            editor.remove("flutter.sms_queue_pending")
-            editor.apply()
         } catch (e: Exception) {
             Log.e(TAG, "❌ processPendingSmsQueue error: ${e.message}")
         }
@@ -217,17 +243,18 @@ class CallDetectionService : Service() {
             acquireWakeLock()
         }
 
-        // ✅ Check subscription expiry on every start — disable trigger if expired
-        if (isSubscriptionExpired()) {
-            Log.d(TAG, "⏭️ Subscription expired — disabling auto trigger in background")
+        // ✅ Check subscription expiry AND user active status on every start
+        if (isSubscriptionExpired() || !isUserActive()) {
+            Log.d(TAG, "⏭️ Subscription expired or user inactive — disabling auto trigger")
             val nativePrefs = getSharedPreferences(NATIVE_PREFS, Context.MODE_PRIVATE)
             nativePrefs.edit().putBoolean("auto_trigger_enabled", false).apply()
             val flutterPrefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
             flutterPrefs.edit().putBoolean("flutter.auto_trigger_enabled", false).apply()
         }
 
-        // ✅ Process any SMS queued by Flutter background isolate
-        processPendingSmsQueue()
+        // ✅ SMS is sent directly by triggerSms via phone state listener
+        // processPendingSmsQueue was causing bulk sends — disabled
+        // processPendingSmsQueue()
 
         if (telephonyManager == null && hasPhonePermission(this)) {
             telephonyManager =
@@ -460,6 +487,12 @@ class CallDetectionService : Service() {
                 getSharedPreferences(NATIVE_PREFS, Context.MODE_PRIVATE)
             val flutterPrefs = getSharedPreferences(
                 "FlutterSharedPreferences", Context.MODE_PRIVATE)
+
+            // ✅ Check subscription expiry AND user active status before sending
+            if (isSubscriptionExpired() || !isUserActive()) {
+                Log.d(TAG, "⏭️ Subscription expired or user inactive — SMS blocked")
+                return
+            }
 
             val enabledRaw =
                 flutterPrefs.all["flutter.auto_trigger_enabled"]
