@@ -183,8 +183,6 @@ class DashboardBloc {
         // ✅ Only treat as expired if API sends the exact code
         // NOT just any 403
         if (data['code'] == 'SUBSCRIPTION_EXPIRED') {
-          // Show expired banner but DON'T lock dashboard
-          // User can still see their data
           state.value = state.value.copyWith(
             subscription: {
               'plan': 'expired',
@@ -194,9 +192,9 @@ class DashboardBloc {
               'sms_remaining': 0,
               'requires_upgrade': true,
             },
+            // ✅ Show the expired dialog with contact number
+            requiresUpgrade: true,
           );
-          // ✅ Don't set requiresUpgrade: true here — that shows blocking dialog
-          // Instead show it as a banner on dashboard
         }
         // Any other 403 — ignore, don't redirect
       }
