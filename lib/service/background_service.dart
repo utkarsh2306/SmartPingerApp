@@ -260,11 +260,10 @@ Future<void> _processNewCall(CallLogEntry call) async {
 
   await NotificationService().notifyCallDetected(call.number!, callType);
 
-  // Dedup check
-  final alreadySent = await _wasAnySmsAlreadySent(call.number!, callType);
-  if (alreadySent) return;
-
-  await _triggerAutoSmsRules(call.number!, callType);
+  // ✅ SMS is handled entirely by native Kotlin CallDetectionService
+  // Do NOT send SMS from Flutter layer — causes duplicates
+  // Kotlin reads auto_sms_message_{callType} from prefs and sends with dedup
+  // await _triggerAutoSmsRules(call.number!, callType);
 }
 
 Future<bool> _wasAnySmsAlreadySent(String phone, String callType) async {

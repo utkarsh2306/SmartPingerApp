@@ -125,6 +125,35 @@ class CallDetectionService : Service() {
     // Flutter background isolate cannot use MethodChannel
     // So it writes each SMS as a separate key — native reads and sends
 
+    // ── Subscription expiry check ─────────────────────────────────────
+    private fun isSubscriptionExpired(): Boolean {
+        return try {
+            val flutterPrefs = getSharedPreferences(
+                "FlutterSharedPreferences", Context.MODE_PRIVATE)
+            val expiryRaw = flutterPrefs.all["flutter.subscription_expiry"]
+                ?: return false // no expiry stored — allow SMS
+
+            val expiry = expiryRaw.toString()
+            val formats = listOf(
+                "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+                "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                "yyyy-MM-dd HH:mm:ss",
+                "yyyy-MM-dd"
+            )
+            for (format in formats) {
+                try {
+                    val sdf = java.text.SimpleDateFormat(format, java.util.Locale.getDefault())
+                    val date = sdf.parse(expiry)
+                    if (date != null) return date.before(java.util.Date())
+                } catch (_: Exception) {}
+            }
+            false
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ isSubscriptionExpired error: ${e.message}")
+            false // fail open — don't block SMS if we can't check
+        }
+    }
+
     private fun processPendingSmsQueue() {
         try {
             val flutterPrefs = getSharedPreferences(
@@ -186,6 +215,15 @@ class CallDetectionService : Service() {
 
         if (wakeLock?.isHeld == false) {
             acquireWakeLock()
+        }
+
+        // ✅ Check subscription expiry on every start — disable trigger if expired
+        if (isSubscriptionExpired()) {
+            Log.d(TAG, "⏭️ Subscription expired — disabling auto trigger in background")
+            val nativePrefs = getSharedPreferences(NATIVE_PREFS, Context.MODE_PRIVATE)
+            nativePrefs.edit().putBoolean("auto_trigger_enabled", false).apply()
+            val flutterPrefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+            flutterPrefs.edit().putBoolean("flutter.auto_trigger_enabled", false).apply()
         }
 
         // ✅ Process any SMS queued by Flutter background isolate

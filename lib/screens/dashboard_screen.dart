@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:message_me/blocs/dashboard/dashboard_bloc.dart';
 import 'package:message_me/screens/auto_sms_screen.dart';
 import 'package:message_me/screens/block_list_screen.dart';
@@ -69,8 +70,59 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Text('Subscription expired'),
           ],
         ),
-        content: const Text(
-          'Your subscription has expired. Please upgrade to continue.',
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Your subscription has expired. Auto SMS has been stopped.',
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEEEDFE),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.phone_rounded,
+                    color: Color(0xFF5B67F1),
+                    size: 20,
+                  ),
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Contact to renew',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF64748B),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      GestureDetector(
+                        onTap: () async {
+                          final uri = Uri.parse('tel:9536235656');
+                          if (await canLaunchUrl(uri)) await launchUrl(uri);
+                        },
+                        child: const Text(
+                          '9536235656',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF5B67F1),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -79,6 +131,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
               _redirectToLogin();
             },
             child: const Text('Logout'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () async {
+              final uri = Uri.parse('tel:9536235656');
+              if (await canLaunchUrl(uri)) await launchUrl(uri);
+            },
+            icon: const Icon(Icons.phone_rounded, size: 16),
+            label: const Text('Call now'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF5B67F1),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
           ),
         ],
       ),

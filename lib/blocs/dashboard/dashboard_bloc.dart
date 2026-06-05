@@ -160,8 +160,13 @@ class DashboardBloc {
           final sub = data['data'] as Map<String, dynamic>;
           state.value = state.value.copyWith(subscription: sub);
 
-          // ✅ Only show upgrade dialog if API explicitly says so
-          // Don't trigger on 403 — that could be a middleware issue
+          // ✅ Save expiry to prefs so Kotlin can check before sending SMS in background
+          final prefs = await SharedPreferences.getInstance();
+          final expiry = sub['expiry_date'] ?? sub['subscription_expiry'];
+          if (expiry != null) {
+            await prefs.setString('subscription_expiry', expiry.toString());
+          }
+
           if (sub['requires_upgrade'] == true) {
             state.value = state.value.copyWith(requiresUpgrade: true);
           }
