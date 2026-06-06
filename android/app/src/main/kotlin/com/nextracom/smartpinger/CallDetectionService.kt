@@ -232,8 +232,14 @@ class CallDetectionService : Service() {
         super.onDestroy()
         stopListening()
         releaseWakeLock()
-        Log.d(TAG, "📡 Service destroyed — scheduling restart")
-        scheduleRestart()
+        // ✅ Only schedule restart if subscription valid and user active
+        // Prevents infinite restart loop when expired/inactive
+        if (!isSubscriptionExpired() && isUserActive()) {
+            Log.d(TAG, "📡 Service destroyed — scheduling restart")
+            scheduleRestart()
+        } else {
+            Log.d(TAG, "📡 Service destroyed — NOT restarting (expired/inactive)")
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -243,13 +249,16 @@ class CallDetectionService : Service() {
             acquireWakeLock()
         }
 
-        // ✅ Check subscription expiry AND user active status on every start
+        // ✅ Stop service entirely if subscription expired or user inactive
         if (isSubscriptionExpired() || !isUserActive()) {
-            Log.d(TAG, "⏭️ Subscription expired or user inactive — disabling auto trigger")
+            Log.d(TAG, "🛑 Subscription expired or user inactive — stopping service")
             val nativePrefs = getSharedPreferences(NATIVE_PREFS, Context.MODE_PRIVATE)
             nativePrefs.edit().putBoolean("auto_trigger_enabled", false).apply()
             val flutterPrefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
             flutterPrefs.edit().putBoolean("flutter.auto_trigger_enabled", false).apply()
+            stopForeground(true)  // Remove notification
+            stopSelf()            // Stop the service
+            return START_NOT_STICKY
         }
 
         // ✅ SMS is sent directly by triggerSms via phone state listener
@@ -349,9 +358,22 @@ class CallDetectionService : Service() {
     }
 
     private fun buildNotification(): Notification {
+        val isExpired = isSubscriptionExpired()
+        val isInactive = !isUserActive()
+        val flutterPrefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+        val isEnabled = flutterPrefs.all["flutter.auto_trigger_enabled"]
+            ?.let { if (it is Boolean) it else it.toString().toBoolean() } ?: false
+
+        val text = when {
+            isInactive -> "Account inactive — SMS paused"
+            isExpired  -> "Subscription expired — SMS paused"
+            !isEnabled -> "Auto SMS disabled"
+            else       -> "Monitoring calls for auto SMS"
+        }
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Smart Pinger")
-            .setContentText("Monitoring calls for auto SMS")
+            .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setSilent(true)

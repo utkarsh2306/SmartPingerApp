@@ -100,6 +100,25 @@ class _SplashScreenState extends State<SplashScreen>
 
       // Logged in — initialize and conditionally start
       await BackgroundServiceManager.initialize();
+
+      // ✅ Check subscription before enabling trigger
+      final expiryStr = prefs.getString('subscription_expiry');
+      final isUserActive = prefs.getBool('user_is_active') ?? true;
+      bool isExpired = false;
+      if (expiryStr != null) {
+        try {
+          final expiryDate = DateTime.parse(expiryStr);
+          isExpired = expiryDate.isBefore(DateTime.now());
+        } catch (_) {}
+      }
+
+      // If expired or inactive — don't start service, disable trigger
+      if (isExpired || !isUserActive) {
+        await prefs.setBool('auto_trigger_enabled', false);
+        await BackgroundServiceManager.syncRulesToNative(enabled: false);
+        return;
+      }
+
       await BackgroundServiceManager.start();
 
       final explicitlyDisabled = prefs.getBool('user_disabled_trigger') ?? false;

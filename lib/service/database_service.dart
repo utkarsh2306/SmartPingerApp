@@ -554,4 +554,21 @@ class DatabaseService {
     );
     if (deleted > 0) debugPrint('🧹 Cleaned $deleted sms_sent_log entries');
   }
+
+  // ✅ Clear all user data on logout — so new user gets fresh DB
+  static Future<void> clearAllUserData() async {
+    final db = await DatabaseService.db;
+    await db.delete('leads');
+    await db.delete('auto_sms_logs');
+    await db.delete('auto_sms_rules');
+    await db.delete('templates');
+    await db.delete('blocked_numbers');
+    await db.delete('processed_calls');
+    await db.delete('scheduled_sms');
+    await db.delete('sms_sent_log');
+    await db.delete('app_notifications');
+    // Re-insert default templates for next user
+    await _insertDefaultTemplates(db);
+    debugPrint('🧹 All user data cleared on logout');
+  }
 }

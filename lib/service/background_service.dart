@@ -16,6 +16,23 @@ void onBackgroundServiceStart(ServiceInstance service) async {
   WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
 
+  // ✅ Check subscription immediately on start — stop if expired/inactive
+  final prefs = await SharedPreferences.getInstance();
+  final expiryStr = prefs.getString('subscription_expiry');
+  final isUserActive = prefs.getBool('user_is_active') ?? true;
+  bool isExpired = false;
+  if (expiryStr != null) {
+    try {
+      final expiryDate = DateTime.parse(expiryStr);
+      isExpired = expiryDate.isBefore(DateTime.now());
+    } catch (_) {}
+  }
+  if (isExpired || !isUserActive) {
+    await prefs.setBool('auto_trigger_enabled', false);
+    service.stopSelf();
+    return;
+  }
+
   // ✅ Listen for native SMS sent event (from Kotlin layer)
   const nativeChannel = MethodChannel(
     'com.nextracom.smartpinger/native_events',
@@ -62,9 +79,29 @@ void onBackgroundServiceStart(ServiceInstance service) async {
     await _syncRulesToNative();
   });
 
-  // Update notification every minute
+  // Update notification every minute — stop service if expired/inactive
   Timer.periodic(const Duration(minutes: 1), (_) async {
     if (service is AndroidServiceInstance) {
+      final prefs = await SharedPreferences.getInstance();
+
+      // ✅ Check subscription expiry
+      final expiryStr = prefs.getString('subscription_expiry');
+      final isUserActive = prefs.getBool('user_is_active') ?? true;
+      bool isExpired = false;
+      if (expiryStr != null) {
+        try {
+          final expiryDate = DateTime.parse(expiryStr);
+          isExpired = expiryDate.isBefore(DateTime.now());
+        } catch (_) {}
+      }
+
+      // ✅ Stop Flutter background service if expired or inactive
+      if (isExpired || !isUserActive) {
+        await prefs.setBool('auto_trigger_enabled', false);
+        service.stopSelf();
+        return;
+      }
+
       final now = DateTime.now();
       service.setForegroundNotificationInfo(
         title: 'Smart Pinger Active',

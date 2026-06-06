@@ -195,7 +195,6 @@ class DashboardBloc {
     } catch (_) {}
   }
 
-  // In dashboard_bloc.dart - Update _loadUserProfile method
 
   Future<void> _loadUserProfile(String token) async {
     try {
@@ -208,12 +207,10 @@ class DashboardBloc {
             },
           )
           .timeout(ApiConfig.receiveTimeout);
-      print("user response code ${res.statusCode}");
       if (res.statusCode == 200) {
         final data = json.decode(res.body);
         if (data['success'] == true) {
           final user = data['data'] as Map<String, dynamic>;
-          print("user data ${data}");
           state.value = state.value.copyWith(user: user);
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('user_email', user['email'] ?? '');
@@ -235,7 +232,6 @@ class DashboardBloc {
         }
       }
     } catch (e) {
-      print("user data error ${e}");
       // ✅ Changed: User not found in exception should also trigger requiresUpgrade
       if (e.toString().contains("User not found")) {
         final prefs = await SharedPreferences.getInstance();

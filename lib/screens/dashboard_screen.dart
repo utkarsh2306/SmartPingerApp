@@ -14,6 +14,7 @@ import 'package:message_me/screens/sms_anyone_screen.dart';
 import 'package:message_me/screens/status_screen.dart';
 import 'package:message_me/service/notification_service.dart';
 import 'package:message_me/service/background_service.dart';
+import 'package:message_me/service/database_service.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -57,7 +58,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   void _showSubscriptionExpiredDialog() {
     final sub = _bloc.state.value.subscription;
-    final isInactive = sub['is_active'] == false || sub['is_active'] == 0;
+    // ✅ Check requiresUpgrade reason — if subscription is empty, user was blocked by auth (inactive)
+    // If sub has is_active explicitly false/0 → inactive
+    // If sub is empty (User not found path) → also inactive
+    final isActiveValue = sub['is_active'];
+    final isInactive =
+        isActiveValue == false ||
+        isActiveValue == 0 ||
+        (sub.isEmpty); // empty sub = blocked at auth level = inactive account
     final title = isInactive ? 'Account deactivated' : 'Subscription expired';
     final message = isInactive
         ? 'Your account has been deactivated. Auto SMS has been stopped. Contact us to reactivate.'
@@ -1387,14 +1395,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _performLogout() async {
     _bloc.reset();
-    // ✅ Explicitly stop service and disable trigger — don't toggle
+
+    // ✅ Stop service and disable trigger FIRST
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('auto_trigger_enabled', false);
     await prefs.setBool('user_disabled_trigger', false);
-    await prefs.setBool(
-      'user_is_active',
-      false,
-    ); // ✅ Tell Kotlin user logged out
+    await prefs.setBool('user_is_active', false);
     await BackgroundServiceManager.stop();
     await BackgroundServiceManager.syncRulesToNative(enabled: false);
     try {
@@ -1402,7 +1408,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
       await platform.invokeMethod('stopCallDetection');
       await platform.invokeMethod('syncAutoTrigger', {'enabled': false});
     } catch (_) {}
+
+    // ✅ Clear local SQLite DB so new user gets fresh data
+    try {
+      await DatabaseService.clearAllUserData();
+    } catch (_) {}
+
+    // ✅ Clear all prefs
     await prefs.clear();
+
+    // ✅ Restore critical Kotlin-readable prefs AFTER clear
+    // (prefs.clear() wiped them — Kotlin must still know not to send SMS)
+    await prefs.setBool('auto_trigger_enabled', false);
+    await prefs.setBool('user_is_active', false);
+
     if (mounted) {
       Navigator.pushAndRemoveUntil(
         context,

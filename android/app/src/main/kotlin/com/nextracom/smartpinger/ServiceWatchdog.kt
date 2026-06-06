@@ -74,7 +74,40 @@ class ServiceWatchdog : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         Log.d(TAG, "⏰ Watchdog fired — checking services")
 
-        // ✅ Restart CallDetectionService if needed
+        // ✅ Don't restart if subscription expired or user inactive
+        val flutterPrefs = context.getSharedPreferences(
+            "FlutterSharedPreferences", Context.MODE_PRIVATE)
+
+        val expiryRaw = flutterPrefs.all["flutter.subscription_expiry"]
+        val isExpired = if (expiryRaw != null) {
+            try {
+                val formats = listOf(
+                    "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+                    "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                    "yyyy-MM-dd"
+                )
+                var expired = false
+                for (format in formats) {
+                    try {
+                        val sdf = java.text.SimpleDateFormat(format, java.util.Locale.getDefault())
+                        val date = sdf.parse(expiryRaw.toString())
+                        if (date != null) { expired = date.before(java.util.Date()); break }
+                    } catch (_: Exception) {}
+                }
+                expired
+            } catch (_: Exception) { false }
+        } else false
+
+        val isActive = flutterPrefs.getBoolean("flutter.user_is_active", true)
+
+        if (isExpired || !isActive) {
+            Log.d(TAG, "⏰ Watchdog — subscription expired or inactive, NOT restarting service")
+            // Cancel future watchdog alarms too
+            cancel(context)
+            return
+        }
+
+        // ✅ Only restart if subscription is valid and user is active
         if (CallDetectionService.hasPhonePermission(context)) {
             CallDetectionService.start(context)
             Log.d(TAG, "✅ Watchdog restarted CallDetectionService")
