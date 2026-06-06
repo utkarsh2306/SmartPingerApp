@@ -13,6 +13,7 @@ import 'package:message_me/screens/settings_screen.dart';
 import 'package:message_me/screens/sms_anyone_screen.dart';
 import 'package:message_me/screens/status_screen.dart';
 import 'package:message_me/service/notification_service.dart';
+import 'package:message_me/service/background_service.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -39,11 +40,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   void _onStateChanged() {
     final s = _bloc.state.value;
-    debugPrint(
-      '🔔 State changed: status=${s.status} requiresLogin=${s.requiresLogin} requiresUpgrade=${s.requiresUpgrade} userEmpty=${s.user.isEmpty}',
-    );
+    '🔔 State changed: status=${s.status} requiresLogin=${s.requiresLogin} requiresUpgrade=${s.requiresUpgrade} userEmpty=${s.user.isEmpty}';
     if (s.requiresLogin && mounted) {
-      debugPrint('🔴 REDIRECTING TO LOGIN — requiresLogin is true');
       _redirectToLogin();
     }
     if (s.requiresUpgrade && mounted) _showSubscriptionExpiredDialog();
@@ -71,14 +69,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
       builder: (ctx) => WillPopScope(
         onWillPop: () async => false, // ✅ Cannot be dismissed by back button
         child: AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: Row(children: [
-            Icon(isInactive ? Icons.block_rounded : Icons.warning_amber_rounded,
-              color: Colors.red, size: 28),
-            const SizedBox(width: 10),
-            Expanded(child: Text(title,
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold))),
-          ]),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: Row(
+            children: [
+              Icon(
+                isInactive ? Icons.block_rounded : Icons.warning_amber_rounded,
+                color: Colors.red,
+                size: 28,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -91,24 +103,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   color: const Color(0xFFEEEDFE),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Row(children: [
-                  const Icon(Icons.phone_rounded, color: Color(0xFF5B67F1), size: 20),
-                  const SizedBox(width: 10),
-                  Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    const Text('Contact to renew',
-                      style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-                    const SizedBox(height: 2),
-                    GestureDetector(
-                      onTap: () async {
-                        final uri = Uri.parse('tel:9536235656');
-                        if (await canLaunchUrl(uri)) await launchUrl(uri);
-                      },
-                      child: const Text('9536235656',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold,
-                          color: Color(0xFF5B67F1))),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.phone_rounded,
+                      color: Color(0xFF5B67F1),
+                      size: 20,
                     ),
-                  ]),
-                ]),
+                    const SizedBox(width: 10),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Contact to renew',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFF64748B),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        GestureDetector(
+                          onTap: () async {
+                            final uri = Uri.parse('tel:9536235656');
+                            if (await canLaunchUrl(uri)) await launchUrl(uri);
+                          },
+                          child: const Text(
+                            '9536235656',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF5B67F1),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -130,7 +161,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF5B67F1),
                 foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
               ),
             ),
           ],
@@ -1354,7 +1387,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _performLogout() async {
     _bloc.reset();
+    // ✅ Explicitly stop service and disable trigger — don't toggle
     final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('auto_trigger_enabled', false);
+    await prefs.setBool('user_disabled_trigger', false);
+    await prefs.setBool(
+      'user_is_active',
+      false,
+    ); // ✅ Tell Kotlin user logged out
+    await BackgroundServiceManager.stop();
+    await BackgroundServiceManager.syncRulesToNative(enabled: false);
+    try {
+      const platform = MethodChannel('com.nextracom.smartpinger/settings');
+      await platform.invokeMethod('stopCallDetection');
+      await platform.invokeMethod('syncAutoTrigger', {'enabled': false});
+    } catch (_) {}
     await prefs.clear();
     if (mounted) {
       Navigator.pushAndRemoveUntil(

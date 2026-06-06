@@ -83,22 +83,26 @@ class _SplashScreenState extends State<SplashScreen>
     );
     _setStatus('Starting background service...');
 
-    // Init background service
-    await CrashReporter.wrap(
-      () => BackgroundServiceManager.initialize(),
-      context: 'BackgroundServiceManager.initialize',
-    );
-    await CrashReporter.wrap(
-      () => BackgroundServiceManager.start(),
-      context: 'BackgroundServiceManager.start',
-    );
-
-    // Auto-enable trigger on fresh install or if not explicitly disabled
+    // ✅ Only start background service if user is logged in
     await CrashReporter.wrap(() async {
       final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+      final isLoggedIn = token != null && token.isNotEmpty;
+
+      if (!isLoggedIn) {
+        // Not logged in — ensure everything is disabled
+        await prefs.setBool('auto_trigger_enabled', false);
+        await prefs.setBool('user_disabled_trigger', false);
+        await BackgroundServiceManager.syncRulesToNative(enabled: false);
+        // Don't start service at all
+        return;
+      }
+
+      // Logged in — initialize and conditionally start
+      await BackgroundServiceManager.initialize();
+      await BackgroundServiceManager.start();
+
       final explicitlyDisabled = prefs.getBool('user_disabled_trigger') ?? false;
-      // ✅ Enable by default unless user explicitly turned it off
-      // Don't require rules to exist — user may not have set them up yet
       if (!explicitlyDisabled) {
         await prefs.setBool('auto_trigger_enabled', true);
       }

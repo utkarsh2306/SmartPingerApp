@@ -9,7 +9,6 @@ import 'package:message_me/service/database_service.dart';
 import 'package:message_me/service/background_service.dart';
 import 'package:message_me/service/notification_service.dart';
 
-// ── Events ────────────────────────────────────────────────────────
 abstract class DashboardEvent {}
 
 class DashboardLoadEvent extends DashboardEvent {}
@@ -23,7 +22,6 @@ class DashboardTabChangedEvent extends DashboardEvent {
   DashboardTabChangedEvent(this.index);
 }
 
-// ── States ────────────────────────────────────────────────────────
 enum DashboardStatus { initial, loading, loaded, error }
 
 class DashboardState {
@@ -79,7 +77,6 @@ class DashboardState {
   }
 }
 
-// ── BLoC ──────────────────────────────────────────────────────────
 class DashboardBloc {
   static final DashboardBloc _instance = DashboardBloc._internal();
   factory DashboardBloc() => _instance;
@@ -88,10 +85,7 @@ class DashboardBloc {
   final ValueNotifier<DashboardState> state = ValueNotifier(
     const DashboardState(),
   );
-
   bool _dataLoaded = false;
-
-  // ✅ Fixed MethodChannel — uses new package name
   static const _platform = MethodChannel('com.nextracom.smartpinger/settings');
 
   void add(DashboardEvent event) {
@@ -101,10 +95,8 @@ class DashboardBloc {
     if (event is DashboardTabChangedEvent) _onTabChanged(event.index);
   }
 
-  // ── Load ──────────────────────────────────────────────────────
   Future<void> _onLoad() async {
     if (_dataLoaded) {
-      // ✅ Clear any stale requiresLogin flag before refreshing
       if (state.value.requiresLogin) {
         state.value = state.value.copyWith(requiresLogin: false);
       }
@@ -122,32 +114,29 @@ class DashboardBloc {
       return;
     }
 
-    // ✅ Load user profile FIRST — never blocked by subscription middleware
     await _loadUserProfile(token);
-
-    // ✅ Load subscription separately — handle errors gracefully
     await _loadSubscription(token);
-
     await _loadAnalytics();
     _refreshAutoTriggerStatus();
 
-    // ✅ Fetch admin notifications in background (non-blocking)
+    // Fetch admin notifications in background
     AdminNotificationService().fetchAndStore();
 
     state.value = state.value.copyWith(status: DashboardStatus.loaded);
     _dataLoaded = true;
   }
 
-  // ── Subscription ──────────────────────────────────────────────
   Future<void> _loadSubscription(String token) async {
     try {
-      final res = await http.get(
-        Uri.parse(ApiConfig.mySubscription),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-      ).timeout(ApiConfig.receiveTimeout);
+      final res = await http
+          .get(
+            Uri.parse(ApiConfig.mySubscription),
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+            },
+          )
+          .timeout(ApiConfig.receiveTimeout);
 
       if (res.statusCode == 200) {
         final data = json.decode(res.body);
@@ -161,9 +150,10 @@ class DashboardBloc {
             await prefs.setString('subscription_expiry', expiry.toString());
           }
 
-          // ✅ Check inactive user
+          // ✅ Save active status so Kotlin can check in background
           final isActive = sub['is_active'];
           final isInactive = isActive == false || isActive == 0;
+          await prefs.setBool('user_is_active', !isInactive);
 
           // ✅ Check expiry locally
           bool isExpired = false;
@@ -185,6 +175,10 @@ class DashboardBloc {
         if (data['code'] == 'SUBSCRIPTION_EXPIRED') {
           final prefs = await SharedPreferences.getInstance();
           await prefs.setBool('auto_trigger_enabled', false);
+          await prefs.setBool(
+            'user_is_active',
+            false,
+          ); // ✅ Tell Kotlin user is inactive
           state.value = state.value.copyWith(
             subscription: {
               'plan': 'expired',
@@ -197,10 +191,12 @@ class DashboardBloc {
           );
         }
       }
+      // 401, 500, network errors — ignore, show dashboard anyway
     } catch (_) {}
   }
 
-  // ── User profile ──────────────────────────────────────────────
+  // In dashboard_bloc.dart - Update _loadUserProfile method
+
   Future<void> _loadUserProfile(String token) async {
     try {
       final res = await http
@@ -212,24 +208,44 @@ class DashboardBloc {
             },
           )
           .timeout(ApiConfig.receiveTimeout);
-
+      print("user response code ${res.statusCode}");
       if (res.statusCode == 200) {
         final data = json.decode(res.body);
         if (data['success'] == true) {
           final user = data['data'] as Map<String, dynamic>;
+          print("user data ${data}");
           state.value = state.value.copyWith(user: user);
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('user_email', user['email'] ?? '');
           await prefs.setString('user_name', user['full_name'] ?? '');
           await prefs.setString('user_phone', user['phone'] ?? '');
         }
+      } else {
+        final data = json.decode(res.body);
+        final error = data['error'];
+        // ✅ Changed: User not found should trigger requiresUpgrade, not requiresLogin
+        if (error.toString().contains("User not found")) {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setBool('auto_trigger_enabled', false);
+          await prefs.setBool('user_is_active', false);
+          state.value = state.value.copyWith(
+            requiresUpgrade: true,
+            user: {}, // Clear user data
+          );
+        }
       }
-      // ✅ Don't redirect to login from profile endpoint errors
-      // Only redirect if token is missing (handled before calling this)
-    } catch (_) {}
+    } catch (e) {
+      print("user data error ${e}");
+      // ✅ Changed: User not found in exception should also trigger requiresUpgrade
+      if (e.toString().contains("User not found")) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('auto_trigger_enabled', false);
+        await prefs.setBool('user_is_active', false);
+        state.value = state.value.copyWith(requiresUpgrade: true, user: {});
+      }
+    }
   }
 
-  // ── Analytics ─────────────────────────────────────────────────
   Future<void> _loadAnalytics() async {
     try {
       final db = await DatabaseService.db;
@@ -240,7 +256,6 @@ class DashboardBloc {
         where: 'is_active = 1',
       )).length;
       final totalTemplates = (await db.query('templates')).length;
-
       state.value = state.value.copyWith(
         analytics: {
           'totalLeads': totalLeads,
@@ -252,15 +267,10 @@ class DashboardBloc {
     } catch (_) {}
   }
 
-  Future<void> _onRefreshAnalytics() async {
-    await _loadAnalytics();
-  }
+  Future<void> _onRefreshAnalytics() async => await _loadAnalytics();
 
-  // ── Auto trigger ──────────────────────────────────────────────
   void _refreshAutoTriggerStatus() async {
     final prefs = await SharedPreferences.getInstance();
-    // ✅ Use pref as source of truth, not just service running state
-    // Service may be running but trigger could be disabled by user
     final enabledInPrefs = prefs.getBool('auto_trigger_enabled') ?? false;
     final serviceRunning = await BackgroundServiceManager.isRunning();
     final isActive = enabledInPrefs && serviceRunning;
@@ -322,16 +332,14 @@ class DashboardBloc {
         if (customMsg != null && customMsg.isNotEmpty) {
           message = customMsg;
         } else {
-          final templateId = rule['template_id'] as int?;
-          if (templateId != null) {
-            final templates = await db.query(
+          final tid = rule['template_id'] as int?;
+          if (tid != null) {
+            final t = await db.query(
               'templates',
               where: 'id = ?',
-              whereArgs: [templateId],
+              whereArgs: [tid],
             );
-            if (templates.isNotEmpty) {
-              message = templates.first['message'] as String? ?? '';
-            }
+            if (t.isNotEmpty) message = t.first['message'] as String? ?? '';
           }
         }
 
@@ -351,12 +359,9 @@ class DashboardBloc {
     } catch (_) {}
   }
 
-  // ── Tab ───────────────────────────────────────────────────────
-  void _onTabChanged(int index) {
-    state.value = state.value.copyWith(tabIndex: index);
-  }
+  void _onTabChanged(int index) =>
+      state.value = state.value.copyWith(tabIndex: index);
 
-  // ── Public methods ────────────────────────────────────────────
   Future<void> refreshUserProfile() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
