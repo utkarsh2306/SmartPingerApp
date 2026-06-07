@@ -15,6 +15,7 @@ import 'package:message_me/screens/status_screen.dart';
 import 'package:message_me/service/notification_service.dart';
 import 'package:message_me/service/background_service.dart';
 import 'package:message_me/service/database_service.dart';
+import 'package:message_me/service/fcm_service.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -31,12 +32,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.initState();
     _bloc.add(DashboardLoadEvent());
     _bloc.state.addListener(_onStateChanged);
+
+    // ✅ Reload dashboard when user taps FCM notification
+    FcmService.reloadTrigger.addListener(_onFcmReload);
+
+    // ✅ Dismiss expired dialog when account is reactivated
+    FcmService.dismissTrigger.addListener(_onFcmDismiss);
   }
 
   @override
   void dispose() {
     _bloc.state.removeListener(_onStateChanged);
+    FcmService.reloadTrigger.removeListener(_onFcmReload);
+    FcmService.dismissTrigger.removeListener(_onFcmDismiss);
     super.dispose();
+  }
+
+  void _onFcmReload() {
+    _bloc.reset();
+    _bloc.add(DashboardLoadEvent());
+  }
+
+  void _onFcmDismiss() {
+    if (!mounted) return;
+    // ✅ Dismiss any open dialog (expired/inactive dialog)
+    Navigator.of(context, rootNavigator: true).popUntil((route) {
+      return route.isFirst || route is! DialogRoute;
+    });
+    _bloc.state.value = _bloc.state.value.copyWith(requiresUpgrade: false);
+    _bloc.add(DashboardLoadEvent());
   }
 
   void _onStateChanged() {

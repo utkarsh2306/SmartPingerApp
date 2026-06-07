@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:message_me/service/admin_notification_service.dart';
 import 'package:message_me/service/background_service.dart';
 import 'package:message_me/service/database_service.dart';
+import 'package:message_me/service/fcm_service.dart';
 import 'package:message_me/service/notification_service.dart';
 import 'package:message_me/service/permission_service.dart';
 import 'package:message_me/service/crash_reporter.dart';
@@ -133,6 +134,12 @@ class _SplashScreenState extends State<SplashScreen>
     await CrashReporter.wrap(
       () => NotificationService().initTable(),
       context: 'NotificationService.initTable',
+    );
+
+    // ✅ Initialize FCM for real-time push notifications
+    await CrashReporter.wrap(
+      () => FcmService.initialize(),
+      context: 'FcmService.initialize',
     );
 
     // ✅ Fetch admin-sent notifications from server

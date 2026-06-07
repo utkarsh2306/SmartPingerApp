@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:message_me/screens/onboarding_screen.dart';
 import 'package:message_me/screens/PermissionSetupScreen.dart';
 import 'package:message_me/screens/splash_screen.dart';
 import 'package:message_me/service/crash_reporter.dart';
+import 'package:message_me/service/fcm_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() async {
@@ -12,24 +15,30 @@ void main() async {
   // ✅ 1. Initialize crash reporter FIRST — catches all errors from here on
   CrashReporter.initialize();
 
-  // ✅ 2. Lock orientation to portrait
+  // ✅ 2. Initialize Firebase
+  await Firebase.initializeApp();
+
+  // ✅ 3. Register FCM background handler before any other firebase calls
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+
+  // ✅ 4. Lock orientation to portrait
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
 
-  // ✅ 3. Set system UI style
+  // ✅ 5. Set system UI style
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
   ));
 
-  // ✅ 4. Read prefs ONLY — no heavy init before UI shows
+  // ✅ 6. Read prefs ONLY — no heavy init before UI shows
   final prefs = await SharedPreferences.getInstance();
   final onboardingDone = prefs.getBool('onboarding_done') ?? false;
   final permissionsDone = prefs.getBool('permissions_setup_done') ?? false;
 
-  // ✅ 5. Show UI immediately — all heavy init happens inside SplashScreen
+  // ✅ 7. Show UI immediately — all heavy init happens inside SplashScreen
   runApp(MyApp(
     showOnboarding: !onboardingDone,
     showPermissions: onboardingDone && !permissionsDone,

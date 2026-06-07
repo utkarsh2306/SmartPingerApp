@@ -30,6 +30,10 @@ dependencies:
   device_info_plus: ^12.4.0
   package_info_plus: ^9.0.1
 
+  # ✅ Firebase FCM
+  firebase_core: ^3.0.0
+  firebase_messaging: ^15.0.0
+
 
 dev_dependencies:
   flutter_test:
